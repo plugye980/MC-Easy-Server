@@ -209,6 +209,11 @@ function registerIpc() {
         await manager.start(id);
         return `Java ${need}로 다시 켰어요.`;
       }
+      case 'disable-optimize': {
+        manager.updateSettings(id, { optimize: false });
+        await manager.start(id);
+        return '최적화 옵션을 끄고 다시 켰어요. 설정 탭에서 다시 켤 수 있어요.';
+      }
       case 'accept-eula': {
         fs.writeFileSync(path.join(paths.serverDir(id), 'eula.txt'), 'eula=true\n');
         await manager.start(id);

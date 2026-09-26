@@ -16,7 +16,7 @@ const { ErrorTranslator } = require('../src/main/errors');
 const java = require('../src/main/java');
 const modrinth = require('../src/main/modrinth');
 const reach = require('../src/main/reachability');
-const { extractAddresses, findTunnelInList } = require('../src/main/tunnel');
+const { Tunnel, pickTunnel, tunnelLocalPort } = require('../src/main/tunnel');
 const { RE } = require('../src/main/server-manager');
 const backup = require('../src/main/backup');
 const paths = require('../src/main/paths');
@@ -63,6 +63,9 @@ test("Aikar's flags", () => {
   assert.ok(f.includes('-Xms6144M') && f.includes('-Xmx6144M'));
   assert.ok(f.includes('-XX:G1HeapRegionSize=8M'));
   assert.ok(optimize.aikarFlags(16384).includes('-XX:G1HeapRegionSize=16M'));
+  // JDK 20에서 없어진 옵션은 넣지 않는다 (Java 21에서 JVM이 켜지지 않음)
+  assert.ok(!f.some((x) => x.includes('G1RSetUpdatingPauseIntervalMillis')));
+  assert.strictEqual(f[0], '-XX:+IgnoreUnrecognizedVMOptions');
 });
 
 test('Paper 설정은 생성된 파일에만 주석을 살려 덮어쓴다', () => {
@@ -89,6 +92,10 @@ test('오류 번역', () => {
 
   const mem = t.check('Error occurred during initialization of VM\nCould not reserve enough space for 8388608KB object heap');
   assert.strictEqual(mem.kind, 'heap-too-big');
+
+  const jvm = t.check("Unrecognized VM option 'G1RSetUpdatingPauseIntervalMillis=100'");
+  assert.strictEqual(jvm.kind, 'jvm-option');
+  assert.strictEqual(jvm.actions[0].id, 'disable-optimize');
 
   const oom = t.check('java.lang.OutOfMemoryError: Java heap space');
   assert.strictEqual(oom.kind, 'out-of-memory');
@@ -160,14 +167,58 @@ test('mrpack 내보내기는 서버 전용 모드를 뺀다', async () => {
   assert.ok(fs.statSync(out).size > 100);
 });
 
-test('터널 주소 추출', () => {
-  assert.deepStrictEqual(extractAddresses('tunnel ready: abc-def.gl.joinmc.link => 127.0.0.1:25565'), ['abc-def.gl.joinmc.link']);
-  assert.deepStrictEqual(extractAddresses('address: fancy-cat.at.ply.gg:41234'), ['fancy-cat.at.ply.gg:41234']);
-  const found = findTunnelInList(
-    { tunnels: [{ id: 't1', name: 'mc-easy-12345678', alloc: { status: 'allocated', data: { assigned_domain: 'x.gl.joinmc.link', assigned_srv: 'x.joinmc.link', port_start: 30000 } } }] },
-    'mc-easy-12345678',
-  );
-  assert.strictEqual(found.address, 'x.joinmc.link');
+test('터널: rundata 에서 서버 터널 고르기', () => {
+  const data = { tunnels: [
+    { name: 'other', tunnel_type: 'minecraft-java', display_address: 'a.joinmc.link' },
+    { name: 'mc-easy-12345678', tunnel_type: 'minecraft-java', display_address: 'x.joinmc.link', agent_config: { fields: [{ name: 'local_port', value: '25566' }] } },
+  ] };
+  const t = pickTunnel(data, 'mc-easy-12345678');
+  assert.strictEqual(t.display_address, 'x.joinmc.link');
+  assert.strictEqual(tunnelLocalPort(t), 25566);
+  assert.strictEqual(pickTunnel(data, 'none'), null);
+});
+
+test('터널: playit API로 연결 → 터널 만들기 → 주소 받기 (가짜 API)', async () => {
+  const calls = [];
+  let created = false;
+  let setupPolls = 0;
+  const reply = (data, status = 'success') => ({ status: 200, json: async () => ({ status, data }) });
+  const fetchImpl = async (url, opts) => {
+    const route = url.replace('https://api.playit.gg', '');
+    const body = JSON.parse(opts.body);
+    calls.push({ route, body, auth: opts.headers.Authorization });
+    if (route === '/claim/setup') return reply(++setupPolls < 2 ? 'WaitingForUser' : 'UserAccepted');
+    if (route === '/claim/exchange') return reply({ secret_key: 'abcdef0123' });
+    if (route === '/v1/agents/rundata') {
+      return reply({ agent_id: 'agent-1', pending: [], tunnels: created ? [{ name: 'mc-easy-srvabcde', tunnel_type: 'minecraft-java', display_address: 'brave-fox.gl.joinmc.link', agent_config: { fields: [{ name: 'local_port', value: '25570' }] } }] : [] });
+    }
+    if (route === '/tunnels/create') {
+      created = true;
+      return reply({ id: 't-1' });
+    }
+    return reply('NotFound', 'fail');
+  };
+  const t = new Tunnel({ fetchImpl });
+  fs.mkdirSync(t.dir, { recursive: true });
+  fs.writeFileSync(t.bin, ''); // 실행 파일 다운로드 건너뛰기
+  t.spawnAgent = () => {}; // 실제 에이전트는 띄우지 않는다
+  const opened = [];
+  t.on('open-url', (u) => opened.push(u));
+
+  const address = await t.start({ id: 'srvabcdef-0000', port: 25570 });
+  assert.strictEqual(address, 'brave-fox.gl.joinmc.link');
+  assert.match(opened[0], /^https:\/\/playit\.gg\/claim\/[0-9a-f]{10}$/);
+  assert.strictEqual(t.readSecret(), 'abcdef0123');
+  const create = calls.find((c) => c.route === '/tunnels/create');
+  assert.strictEqual(create.auth, 'Agent-Key abcdef0123');
+  assert.deepStrictEqual(create.body.origin, { type: 'agent', data: { agent_id: 'agent-1', local_ip: '127.0.0.1', local_port: 25570 } });
+  assert.strictEqual(create.body.tunnel_type, 'minecraft-java');
+  assert.strictEqual(t.state.status, 'running');
+
+  // 두 번째부터는 연결·생성 없이 주소만 가져온다
+  calls.length = 0;
+  assert.strictEqual(await t.start({ id: 'srvabcdef-0000', port: 25570 }), 'brave-fox.gl.joinmc.link');
+  assert.ok(!calls.some((c) => c.route.startsWith('/claim') || c.route === '/tunnels/create'));
 });
 
 test('Server List Ping 은 로컬 서버 응답을 읽는다', async () => {

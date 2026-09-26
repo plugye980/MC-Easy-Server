@@ -496,7 +496,7 @@
     const gauge = Charts.gauge({ size: 220, max: 20 });
     const tpsText = h('div.stat-value.num.sky');
     const tpsNote = h('div.note');
-    const memChart = Charts.ridge({ width: 600, height: 170, max: s.memoryMb, tag: 'MEMORY' });
+    const memChart = Charts.ridge({ width: 600, height: 170, max: s.memoryMb });
     const memText = h('span.stat-value.num.sky');
     const cpuText = h('span.num');
     const memNote = h('span.note');

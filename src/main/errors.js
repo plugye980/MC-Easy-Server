@@ -57,6 +57,16 @@ const RULES = [
     },
   },
   {
+    id: 'jvm-option',
+    test: /Unrecognized VM option|Could not create the Java Virtual Machine|Unrecognized option: /i,
+    build: () => ({
+      severity: 'error',
+      title: 'Java 실행 옵션이 맞지 않아요',
+      message: '이 Java가 모르는 실행 옵션이 있어서 서버가 켜지지 않았어요. 최적화 옵션을 끄고 다시 켤까요?',
+      actions: [{ id: 'disable-optimize', label: '최적화 옵션 끄고 다시 켜기' }],
+    }),
+  },
+  {
     id: 'eula',
     test: /You need to agree to the EULA/i,
     build: () => ({

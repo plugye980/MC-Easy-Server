@@ -4,10 +4,15 @@ const fs = require('fs');
 const path = require('path');
 const YAML = require('yaml');
 
-/** Aikar's flags (https://docs.papermc.io/paper/aikars-flags). 12GB 이상이면 큰 힙용 값을 쓴다. */
+/**
+ * Aikar's flags (https://docs.papermc.io/paper/aikars-flags). 12GB 이상이면 큰 힙용 값을 쓴다.
+ * G1RSetUpdatingPauseIntervalMillis 는 JDK 20에서 없어져 Java 21 이상에서는 JVM이 아예 켜지지 않으므로 뺀다.
+ * 앞으로 다른 옵션이 없어져도 서버가 켜지도록 IgnoreUnrecognizedVMOptions 를 맨 앞에 둔다.
+ */
 function aikarFlags(memoryMb) {
   const big = memoryMb >= 12 * 1024;
   return [
+    '-XX:+IgnoreUnrecognizedVMOptions',
     `-Xms${memoryMb}M`,
     `-Xmx${memoryMb}M`,
     '-XX:+UseG1GC',
@@ -24,7 +29,6 @@ function aikarFlags(memoryMb) {
     '-XX:G1MixedGCCountTarget=4',
     `-XX:InitiatingHeapOccupancyPercent=${big ? 20 : 15}`,
     '-XX:G1MixedGCLiveThresholdPercent=90',
-    '-XX:G1RSetUpdatingPauseIntervalMillis=100',
     '-XX:SurvivorRatio=32',
     '-XX:+PerfDisableSharedMem',
     '-XX:MaxTenuringThreshold=1',
