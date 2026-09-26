@@ -480,16 +480,17 @@
   function renderTabs() {
     const s = server();
     if (!s) return;
+    if (state.tab === 'addons' && s.type === 'vanilla') state.tab = 'overview';
     put(live.tabs, 
       seg(
         [
           { value: 'overview', label: '개요' },
           { value: 'console', label: '콘솔' },
           { value: 'players', label: `접속자${s.players.length ? ` ${s.players.length}` : ''}` },
-          { value: 'addons', label: TYPE[s.type].addon },
+          s.type === 'vanilla' ? null : { value: 'addons', label: TYPE[s.type].addon },
           { value: 'backups', label: '백업' },
           { value: 'settings', label: '설정' },
-        ],
+        ].filter(Boolean),
         state.tab,
         (tab) => {
           state.tab = tab;
@@ -505,6 +506,7 @@
     if (!s || !live.content) return;
     live.console = null;
     live.updateMetrics = null;
+    if (state.tab === 'addons' && s.type === 'vanilla') state.tab = 'overview';
     const views = { overview: viewOverview, console: viewConsole, players: viewPlayers, addons: viewAddons, backups: viewBackups, settings: viewSettings };
     const scroll = live.content.scrollTop;
     put(live.content, views[state.tab](s));
@@ -584,7 +586,7 @@
             info('포트', String(s.port)),
             info('시야 거리', `${s.settings.viewDistance}칸`),
             info('최적화', s.optimize ? (s.type === 'paper' ? (s.optimizedApplied ? 'Aikar 플래그 + Paper 설정 적용됨' : 'Aikar 플래그 (Paper 설정은 첫 실행 후)') : 'Aikar 플래그 적용됨') : '끔'),
-            info(TYPE[s.type].addon, `${(s.addons || []).length}개`),
+            s.type === 'vanilla' ? null : info(TYPE[s.type].addon, `${(s.addons || []).length}개`),
           ),
         ),
       ),
@@ -1094,7 +1096,7 @@
           h(
             'div.card',
             null,
-            h('div.card-head', null, h('h2', null, '성능'), tpsNote),
+            h('div.card-head', null, h('h2', null, '성능')),
             row('메모리', `PC 메모리 ${specs ? `${specs.totalGb}GB` : ''} 기준 추천값 표시`, mem),
             row('시야 거리', '줄이면 서버 부담 감소 (추천 8~10)', slider({ min: 3, max: 20, value: draft.viewDistance, onInput: set('viewDistance'), format: (v) => `${v}칸` })),
             row('시뮬레이션 거리', '작물·몹이 움직이는 거리 (추천 6~8)', slider({ min: 3, max: 16, value: draft.simulationDistance, onInput: set('simulationDistance'), format: (v) => `${v}칸` })),
