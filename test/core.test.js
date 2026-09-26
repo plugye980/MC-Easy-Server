@@ -212,7 +212,7 @@ test('터널: playit API로 연결 → 터널 만들기 → 주소 받기 (가�
     if (route === '/v1/agents/rundata') {
       return reply({ agent_id: 'agent-1', pending: [], tunnels: created ? [{ name: 'mc-easy-srvabcde', tunnel_type: 'minecraft-java', display_address: 'brave-fox.gl.joinmc.link', agent_config: { fields: [{ name: 'local_port', value: '25570' }] } }] : [] });
     }
-    if (route === '/tunnels/create') {
+    if (route === '/v1/tunnels/create') {
       created = true;
       return reply({ id: 't-1' });
     }
@@ -229,16 +229,18 @@ test('터널: playit API로 연결 → 터널 만들기 → 주소 받기 (가�
   assert.strictEqual(address, 'brave-fox.gl.joinmc.link');
   assert.match(opened[0], /^https:\/\/playit\.gg\/claim\/[0-9a-f]{10}$/);
   assert.strictEqual(t.readSecret(), 'abcdef0123');
-  const create = calls.find((c) => c.route === '/tunnels/create');
+  const create = calls.find((c) => c.route === '/v1/tunnels/create');
   assert.strictEqual(create.auth, 'Agent-Key abcdef0123');
-  assert.deepStrictEqual(create.body.origin, { type: 'agent', data: { agent_id: 'agent-1', local_ip: '127.0.0.1', local_port: 25570 } });
-  assert.strictEqual(create.body.tunnel_type, 'minecraft-java');
+  assert.deepStrictEqual(create.body.ports, { type: 'tunnel-type', details: 'minecraft-java' });
+  assert.deepStrictEqual(create.body.origin, { type: 'agent', data: { agent_id: 'agent-1', config: { fields: [{ name: 'local_ip', value: '127.0.0.1' }, { name: 'local_port', value: '25570' }] } } });
+  assert.ok(!calls.some((c) => c.route === '/tunnels/create'), '새 API 가 되면 예전 API 는 부르지 않는다');
   assert.strictEqual(t.state.status, 'running');
+  assert.strictEqual(t.state.message, null);
 
   // 두 번째부터는 연결·생성 없이 주소만 가져온다
   calls.length = 0;
   assert.strictEqual(await t.start({ id: 'srvabcdef-0000', port: 25570 }), 'brave-fox.gl.joinmc.link');
-  assert.ok(!calls.some((c) => c.route.startsWith('/claim') || c.route === '/tunnels/create'));
+  assert.ok(!calls.some((c) => c.route.startsWith('/claim') || /tunnels\/create/.test(c.route)));
 });
 
 test('Server List Ping 은 로컬 서버 응답을 읽는다', async () => {
@@ -289,9 +291,9 @@ test('터널: 에이전트가 새 버전으로 등록되기 전(AgentVersionTooO
     if (route === '/v1/agents/rundata') {
       return reply({ agent_id: 'agent-2', pending: [], tunnels: created ? [{ name: 'mc-easy-retrytes', tunnel_type: 'minecraft-java', display_address: 'late.joinmc.link' }] : [] });
     }
-    if (route === '/tunnels/create') {
+    if (route === '/v1/tunnels/create' || route === '/tunnels/create') {
       createCalls++;
-      if (createCalls <= 2) return reply('AgentVersionTooOld', 'fail'); // 첫 시도(agent·managed 둘 다) 거절
+      if (createCalls <= 2) return reply('AgentNotFound', 'fail'); // 첫 시도(새·예전 API 둘 다) 거절
       created = true;
       return reply({ id: 't-2' });
     }
@@ -305,4 +307,31 @@ test('터널: 에이전트가 새 버전으로 등록되기 전(AgentVersionTooO
   const address = await t.start({ id: 'retrytest-0000', port: 25565 });
   assert.strictEqual(address, 'late.joinmc.link');
   assert.strictEqual(createCalls, 3);
+});
+
+test('터널: 만든 뒤 대기(pending) 상태를 보여주고, 주소가 나오면 대기 문구를 지운다', async () => {
+  let polls = 0;
+  const reply = (data, status = 'success') => ({ status: 200, json: async () => ({ status, data }) });
+  const messages = [];
+  const fetchImpl = async (url) => {
+    const route = url.replace('https://api.playit.gg', '');
+    if (route === '/v1/agents/rundata') {
+      polls++;
+      if (polls === 1) return reply({ agent_id: 'a3', pending: [], tunnels: [] });
+      if (polls < 4) return reply({ agent_id: 'a3', pending: [{ id: 'p', name: 'mc-easy-pendingt', status_msg: 'allocating' }], tunnels: [] });
+      return reply({ agent_id: 'a3', pending: [], tunnels: [{ name: 'mc-easy-pendingt', tunnel_type: 'minecraft-java', display_address: 'ready.joinmc.link' }] });
+    }
+    if (route === '/v1/tunnels/create') return reply({ id: 't' });
+    return reply('NotFound', 'fail');
+  };
+  const t = new Tunnel({ fetchImpl });
+  fs.mkdirSync(t.dir, { recursive: true });
+  fs.writeFileSync(t.bin, '');
+  fs.writeFileSync(t.secretFile, JSON.stringify({ secret: 'abcdef0123' }));
+  t.spawnAgent = () => {};
+  t.on('state', (x) => x.message && messages.push(x.message));
+  assert.strictEqual(await t.start({ id: 'pendingtest-0000', port: 25565 }), 'ready.joinmc.link');
+  assert.ok(messages.includes('터널 준비 중 — allocating'));
+  assert.strictEqual(t.state.message, null);
+  assert.strictEqual(t.state.status, 'running');
 });

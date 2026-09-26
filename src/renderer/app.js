@@ -1100,8 +1100,13 @@
           'playit.gg 터널',
           '포트포워딩 없이 접속 주소 발급 (추천)',
           h('div.inline', null, button('터널 연결', () => startTunnel(s.id), { small: true, kind: 'primary' }), button('playit 연결 초기화', async () => {
-            const ok = await modal({ title: 'playit 연결 초기화', body: h('p', null, '저장된 playit.gg 연결을 지우고 처음부터 다시 연결'), actions: [{ label: '취소', value: false }, { label: '초기화', value: true, kind: 'danger' }] });
-            if (ok) call('tunnel:reset');
+            const ok = await modal({ title: 'playit 연결 초기화', body: h('p', null, '저장된 playit.gg 연결과 접속 주소를 지우고 처음부터 다시 연결'), actions: [{ label: '취소', value: false }, { label: '초기화', value: true, kind: 'danger' }] });
+            if (ok && (await call('tunnel:reset'))) {
+              for (const x of state.servers) if (x.network && x.network.mode !== 'upnp') x.network = { ...x.network, address: null };
+              state.reach = {};
+              renderAddress();
+              toast('playit 연결·접속 주소 초기화 — "터널 연결"로 다시 연결', { kind: 'ok', timeout: 6000 });
+            }
           }, { small: true, kind: 'ghost' })),
         ),
         row(
