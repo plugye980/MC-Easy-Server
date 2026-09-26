@@ -11,19 +11,20 @@ const API = 'https://api.modrinth.com/v2';
 function loadersFor(type) {
   if (type === 'paper') return ['paper', 'spigot', 'bukkit'];
   if (type === 'fabric') return ['fabric'];
+  if (type === 'forge') return ['forge'];
   return ['datapack'];
 }
 
 /** 추가 기능이 들어갈 폴더 (서버 폴더 기준 상대 경로) */
 function addonFolder(server) {
   if (server.type === 'paper') return 'plugins';
-  if (server.type === 'fabric') return 'mods';
+  if (server.type === 'fabric' || server.type === 'forge') return 'mods';
   return path.join(server.levelName || 'world', 'datapacks');
 }
 
 function searchFacets(server) {
   const facets = [loadersFor(server.type).map((l) => `categories:${l}`), [`versions:${server.version}`]];
-  if (server.type === 'fabric') {
+  if (server.type === 'fabric' || server.type === 'forge') {
     facets.push(['project_type:mod']);
     // 서버에서 돌지 않는 클라이언트 전용 모드는 뺀다
     facets.push(['server_side:required', 'server_side:optional']);
@@ -98,7 +99,7 @@ async function install(server, serverDir, projectId, onProgress = () => {}, ctx 
 
   const [meta, version] = await Promise.all([project(projectId), compatibleVersion(server, projectId)]);
   if (!version) {
-    const reason = `${server.version} ${server.type === 'fabric' ? 'Fabric' : server.type === 'paper' ? 'Paper' : ''} 버전 없음`;
+    const reason = `${server.version} ${{ fabric: 'Fabric', forge: 'Forge', paper: 'Paper' }[server.type] || ''} 버전 없음`;
     if (top) throw new Error(`"${meta.title}": 현재 서버와 맞는 파일 없음 (${reason.trim()})`);
     ctx.skipped.push({ title: meta.title, reason });
     return ctx;

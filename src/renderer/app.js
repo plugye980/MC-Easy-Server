@@ -8,9 +8,17 @@
 
   const TYPE = {
     paper: { label: '플러그인 서버', sub: 'Paper', desc: '플러그인으로 기능 추가. 가장 가볍고 빠름', addon: '플러그인', folder: 'plugins' },
+    forge: { label: '모드 서버', sub: 'Forge', desc: '모드 사용. 접속하는 쪽도 같은 모드 설치 필요', addon: '모드', folder: 'mods' },
     fabric: { label: '모드 서버', sub: 'Fabric', desc: '모드 사용. 접속하는 쪽도 같은 모드 설치 필요', addon: '모드', folder: 'mods' },
     vanilla: { label: '바닐라 서버', sub: 'Vanilla', desc: '아무것도 넣지 않은 공식 서버', addon: '데이터팩', folder: 'datapacks' },
   };
+  const MOD_TYPES = ['forge', 'fabric'];
+  // 만들기 화면의 종류 카드: 모드 서버는 하나로 두고 안에서 로더(Forge 기본 · Fabric)를 고른다
+  const TYPE_CARDS = [
+    { key: 'paper', label: '플러그인 서버', sub: 'Paper', desc: TYPE.paper.desc },
+    { key: 'mod', label: '모드 서버', sub: 'Forge · Fabric', desc: TYPE.forge.desc },
+    { key: 'vanilla', label: '바닐라 서버', sub: 'Vanilla', desc: TYPE.vanilla.desc },
+  ];
   const STATUS = {
     stopped: { label: '꺼짐', dot: 'off' },
     starting: { label: '켜는 중', dot: 'busy' },
@@ -51,6 +59,7 @@
 
   /** 서버 종류 표시: 플러그인 = 네모, 모드 = 네 칸 블록, 바닐라 = 원 */
   function typeMark(type, cls = '') {
+    if (type === 'forge' || type === 'mod') type = 'fabric';
     const core = type === 'fabric' ? h('span.mark-core', null, h('i'), h('i'), h('i'), h('i')) : h('span.mark-core');
     return h(`span.mark.mark-${TYPE[type] ? type : 'paper'}${cls}`, { 'aria-hidden': 'true' }, core);
   }
@@ -471,16 +480,17 @@
   function renderTabs() {
     const s = server();
     if (!s) return;
+    if (state.tab === 'addons' && s.type === 'vanilla') state.tab = 'overview';
     put(live.tabs, 
       seg(
         [
           { value: 'overview', label: '개요' },
           { value: 'console', label: '콘솔' },
           { value: 'players', label: `접속자${s.players.length ? ` ${s.players.length}` : ''}` },
-          { value: 'addons', label: TYPE[s.type].addon },
+          s.type === 'vanilla' ? null : { value: 'addons', label: TYPE[s.type].addon },
           { value: 'backups', label: '백업' },
           { value: 'settings', label: '설정' },
-        ],
+        ].filter(Boolean),
         state.tab,
         (tab) => {
           state.tab = tab;
@@ -496,6 +506,7 @@
     if (!s || !live.content) return;
     live.console = null;
     live.updateMetrics = null;
+    if (state.tab === 'addons' && s.type === 'vanilla') state.tab = 'overview';
     const views = { overview: viewOverview, console: viewConsole, players: viewPlayers, addons: viewAddons, backups: viewBackups, settings: viewSettings };
     const scroll = live.content.scrollTop;
     put(live.content, views[state.tab](s));
@@ -575,7 +586,7 @@
             info('포트', String(s.port)),
             info('시야 거리', `${s.settings.viewDistance}칸`),
             info('최적화', s.optimize ? (s.type === 'paper' ? (s.optimizedApplied ? 'Aikar 플래그 + Paper 설정 적용됨' : 'Aikar 플래그 (Paper 설정은 첫 실행 후)') : 'Aikar 플래그 적용됨') : '끔'),
-            info(TYPE[s.type].addon, `${(s.addons || []).length}개`),
+            s.type === 'vanilla' ? null : info(TYPE[s.type].addon, `${(s.addons || []).length}개`),
           ),
         ),
       ),
@@ -919,7 +930,7 @@
       q.page = 0;
       clearTimeout(timer);
       timer = setTimeout(doSearch, 350);
-    }, { placeholder: `${t.addon} 이름으로 찾기 (예: ${s.type === 'paper' ? 'EssentialsX, LuckPerms' : s.type === 'fabric' ? 'Sodium, Lithium' : 'Vanilla Tweaks'})` });
+    }, { placeholder: `${t.addon} 이름으로 찾기 (예: ${s.type === 'paper' ? 'EssentialsX, LuckPerms' : s.type === 'forge' ? 'JEI, Create' : s.type === 'fabric' ? 'Sodium, Lithium' : 'Vanilla Tweaks'})` });
 
     refreshInstalled();
     doSearch();
@@ -944,7 +955,7 @@
                 refreshInstalled();
               }
             }, { small: true, icon: '⬆' }),
-            s.type === 'fabric'
+            MOD_TYPES.includes(s.type)
               ? button('접속용 mods.zip', async () => {
                   const r = await call('addons:exportModsZip', s.id);
                   if (r && r !== true) toast(`mods.zip 저장 — 모드 ${r.count}개 · 압축을 풀어 .minecraft/mods 에 넣기 (Fabric Loader ${r.loader || ''} · 마인크래프트 ${r.minecraft})`, { kind: 'ok', timeout: 10000 });
@@ -1085,7 +1096,7 @@
           h(
             'div.card',
             null,
-            h('div.card-head', null, h('h2', null, '성능'), tpsNote),
+            h('div.card-head', null, h('h2', null, '성능')),
             row('메모리', `PC 메모리 ${specs ? `${specs.totalGb}GB` : ''} 기준 추천값 표시`, mem),
             row('시야 거리', '줄이면 서버 부담 감소 (추천 8~10)', slider({ min: 3, max: 20, value: draft.viewDistance, onInput: set('viewDistance'), format: (v) => `${v}칸` })),
             row('시뮬레이션 거리', '작물·몹이 움직이는 거리 (추천 6~8)', slider({ min: 3, max: 16, value: draft.simulationDistance, onInput: set('simulationDistance'), format: (v) => `${v}칸` })),
@@ -1444,30 +1455,47 @@
       );
     };
 
+    const cardKey = () => (MOD_TYPES.includes(c.type) ? 'mod' : c.type);
+    const loaderRow = h('div');
+    const drawLoader = () => {
+      put(
+        loaderRow,
+        MOD_TYPES.includes(c.type)
+          ? row('모드 로더', 'Forge: 대형 콘텐츠 모드(Create 등) 대부분 지원 · Fabric: 가볍고 최신 버전 대응이 빠름', seg([{ value: 'forge', label: 'Forge (기본)' }, { value: 'fabric', label: 'Fabric' }], c.type, (v) => {
+              c.type = v;
+              c.modLoader = v;
+              syncAutoName();
+              loadVersions();
+            }))
+          : null,
+      );
+    };
     const typeCards = h(
       'div.type-grid',
       null,
-      Object.entries(TYPE).map(([key, t]) =>
+      TYPE_CARDS.map((t) =>
         h(
-          `button.type-card${c.type === key ? '.on' : ''}`,
+          `button.type-card${cardKey() === t.key ? '.on' : ''}`,
           {
             type: 'button',
             onclick: (e) => {
-              c.type = key;
+              c.type = t.key === 'mod' ? c.modLoader || 'forge' : t.key;
               typeCards.querySelectorAll('.type-card').forEach((x) => x.classList.remove('on'));
               e.currentTarget.classList.add('on');
+              drawLoader();
               renderSide();
               syncAutoName();
               loadVersions();
             },
           },
-          typeMark(key, '.type-ico'),
+          typeMark(t.key, '.type-ico'),
           h('h3', null, t.label),
           h('span.note', null, t.sub),
           h('p', { style: { fontSize: '0.82rem' } }, t.desc),
         ),
       ),
     );
+    drawLoader();
 
     const memMarks = [{ value: specs.recommendedMb, label: `추천 ${fmt.gb(specs.recommendedMb)}` }];
     const mem = slider({ min: 1024, max: specs.maxMb, step: 512, value: c.memoryMb, onInput: (v) => (c.memoryMb = v), format: fmt.gb, marks: memMarks });
@@ -1516,7 +1544,7 @@
           h('div.pc-item.well-sm', null, dot('ok'), h('div', null, h('div.txt', null, `PC 메모리 ${specs.totalGb}GB`), h('div.note', null, `서버 추천 할당 ${fmt.gb(specs.recommendedMb)} (나머지는 PC·게임용)`)), h('span.num.sky', null, fmt.gb(specs.recommendedMb))),
         )),
 
-        h('div.card', null, h('div.card-head', null, h('h2', null, '서버 종류')), typeCards),
+        h('div.card', null, h('div.card-head', null, h('h2', null, '서버 종류')), typeCards, loaderRow),
 
         h(
           'div.grid.grid-2',
@@ -1528,7 +1556,7 @@
             row('마인크래프트 버전', '접속할 클라이언트와 같은 버전 사용. 기본값은 최신 안정 버전', versionBox),
             nameRow,
             row('메모리', 'PC 사양 기준 추천값 표시', mem),
-            row('자동 최적화', "Aikar's flags · Paper 추천 설정 · 적정 시야 거리" + (c.type === 'fabric' ? ' · 최적화 모드(Lithium 등)' : ''), toggle(c.optimize, (v) => (c.optimize = v))),
+            row('자동 최적화', "Aikar's flags · Paper 추천 설정 · 적정 시야 거리" + (c.type === 'fabric' ? ' · 최적화 모드(Lithium 등)' : c.type === 'forge' ? ' · 최적화 모드(ModernFix 등)' : ''), toggle(c.optimize, (v) => (c.optimize = v))),
           ),
           h(
             'div.card',

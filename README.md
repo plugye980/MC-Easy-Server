@@ -3,7 +3,7 @@
 **MC Easy Server** — 친구들끼리 여는 마인크래프트 서버 간편 설치·관리 앱
 
 친구들끼리 마인크래프트 서버를 여는 데 필요한 일을 한 앱에서 처리합니다.
-플러그인 서버(Paper), 모드 서버(Fabric), 바닐라 서버를 만들 수 있고, Java 준비, 최적화, 친구 접속 주소, 플러그인·모드 설치, 백업까지 앱이 맡습니다.
+플러그인 서버(Paper), 모드 서버(Forge 기본 · Fabric 선택), 바닐라 서버를 만들 수 있고, Java 준비, 최적화, 친구 접속 주소, 플러그인·모드 설치, 백업까지 앱이 맡습니다.
 
 설치 마법사처럼 단계를 넘기는 방식이 아닙니다. Docker Desktop처럼 **한 화면**에서 서버를 추가·삭제·관리합니다. 왼쪽에 서버 목록이 있고, 오른쪽에서 고른 서버를 다룹니다.
 
@@ -18,13 +18,18 @@ npm run dist:win   # Windows 설치 파일 + 포터블 exe (dist/)
 
 ## 데이터 위치
 
-서버, Java 런타임, 백업, 터널 프로그램은 모두 **앱 폴더 안**에 만들어집니다. 시스템에는 아무것도 설치하지 않습니다.
+서버, Java 런타임, 백업, 터널 프로그램은 모두 **한 폴더 안**에 만들어집니다. 시스템에는 아무것도 설치하지 않습니다.
 
 | 실행 방식 | 위치 |
 | --- | --- |
 | 개발(`npm start`) | `./data` |
-| 설치판 | 실행 파일 옆 `data/` |
+| 설치판 (Windows) | `%LOCALAPPDATA%\MCES\data` |
+| 설치판 (macOS·Linux) | 사용자 앱 데이터 폴더의 `data/` |
 | 포터블 exe | exe 옆 `MCEasyData/` |
+
+설치판 데이터는 설치 폴더 밖에 둡니다. 설치 프로그램은 업데이트·제거 때 설치 폴더를 통째로 지우기 때문입니다.
+새 버전 설치 파일을 그냥 실행하면 서버가 그대로 유지됩니다. 예전 버전(실행 파일 옆 `data/`)의 데이터는 설치 과정에서 새 위치로 옮겨집니다.
+포터블 exe는 새 exe를 같은 폴더에 덮어쓰면 됩니다.
 
 ```
 data/
@@ -42,7 +47,8 @@ data/
 - **PC 사양 확인**: 전체 RAM을 읽어 서버 메모리를 추천합니다(예: 16GB → 6GB). 슬라이더에도 추천값이 표시됩니다.
 
 ### 서버를 만들 때
-1. 종류 선택: 플러그인 서버(Paper), 모드 서버(Fabric), 바닐라 서버
+1. 종류 선택: 플러그인 서버(Paper), 모드 서버, 바닐라 서버
+   - 모드 서버는 **Forge가 기본**이고 Fabric을 고를 수도 있습니다. Forge는 설치 프로그램(`--installServer`)으로 라이브러리를 받아 설치하고, 설치된 인자 파일(`@libraries/.../unix_args.txt`, 구버전은 forge jar)로 실행합니다
 2. 버전 선택: 기본값은 최신 안정 버전
 3. 기본 설정: `server.properties`를 직접 보여주지 않고 난이도, 게임 모드, 최대 인원, PVP, 화이트리스트 등을 풀어서 설명합니다
 4. EULA 동의: 한 줄 설명과 체크박스
@@ -50,6 +56,7 @@ data/
    - Aikar's flags(G1GC JVM 옵션). 12GB 이상이면 큰 힙용 값을 씁니다. Java 21 이상에서 없어진 옵션은 넣지 않습니다
    - `server.properties`: 할당 메모리에 맞춘 view-distance와 simulation-distance, network-compression-threshold
    - Paper: `paper-world-defaults.yml`, `spigot.yml`, `bukkit.yml`에 추천값을 넣습니다. 이 파일들은 첫 실행 때 생기므로, 생긴 뒤 주석을 유지한 채 값만 바꿉니다
+   - Forge: ModernFix, FerriteCore를 함께 설치합니다
    - Fabric: Fabric API, Lithium, FerriteCore를 함께 설치합니다
 
 ### 맵

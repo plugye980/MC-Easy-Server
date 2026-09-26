@@ -2,12 +2,74 @@
 // 직접 넣은 플러그인·모드·데이터팩 파일의 정보를 파일 안에서 읽고, Modrinth 없이 호환 여부를 판단한다.
 //   Paper/Bukkit: plugin.yml · paper-plugin.yml (name, version, api-version, depend)
 //   Fabric:       fabric.mod.json (id, name, version, depends.minecraft, 다른 모드 의존성)
+//   Forge:        META-INF/mods.toml (modId, displayName, version, dependencies.minecraft 범위) · 구버전 mcmod.info
 //   데이터팩:     pack.mcmeta
 const yauzl = require('yauzl');
 const YAML = require('yaml');
+const TOML = require('@iarna/toml');
 const { compareVersions } = require('./versions');
 
-const WANTED = ['plugin.yml', 'paper-plugin.yml', 'fabric.mod.json', 'quilt.mod.json', 'pack.mcmeta'];
+const WANTED = [
+  'plugin.yml', 'paper-plugin.yml', 'fabric.mod.json', 'quilt.mod.json', 'pack.mcmeta',
+  'META-INF/mods.toml', 'META-INF/neoforge.mods.toml', 'META-INF/MANIFEST.MF', 'mcmod.info',
+];
+
+/** Forge mods.toml → 모드 정보. version 이 ${file.jarVersion} 이면 MANIFEST 의 Implementation-Version */
+function parseModsToml(text, manifest) {
+  let t = {};
+  try {
+    t = TOML.parse(text);
+  } catch {
+    return null;
+  }
+  const mod = (t.mods || [])[0] || {};
+  const id = mod.modId || null;
+  let version = mod.version ? String(mod.version) : null;
+  if (version && version.includes('${')) {
+    const m = /^Implementation-Version:\s*(.+)$/m.exec(manifest || '');
+    version = m ? m[1].trim() : null;
+  }
+  const deps = (t.dependencies && id && t.dependencies[id]) || [];
+  const required = (d) => d.mandatory === true || d.type === 'required' || (d.mandatory === undefined && d.type === undefined);
+  const mc = deps.find((d) => d.modId === 'minecraft');
+  return {
+    kind: 'forge',
+    id,
+    name: mod.displayName || id,
+    version,
+    mcRange: mc ? String(mc.versionRange || '') : null,
+    depends: deps.filter((d) => required(d) && !['minecraft', 'forge', 'neoforge', 'java'].includes(d.modId)).map((d) => d.modId),
+    provides: [],
+  };
+}
+
+/** Maven 버전 범위: "[1.20.1,1.21)", "[1.20,)", "[1.20.1]", 여러 구간은 "[...],[...]" · 괄호 없는 값은 그 버전 이상 */
+function matchesMavenRange(range, mc) {
+  const r = String(range || '').trim();
+  if (!r || r === '*') return true;
+  if (!/[[(]/.test(r)) return compareVersions(mc, r) >= 0;
+  const sets = [...r.matchAll(/([[(])([^\])]*)([\])])/g)];
+  return sets.some(([, open, inner, close]) => {
+    if (!inner.includes(',')) return compareVersions(mc, inner.trim()) === 0;
+    const [lo, hi] = inner.split(',').map((x) => x.trim());
+    if (lo && (open === '[' ? compareVersions(mc, lo) < 0 : compareVersions(mc, lo) <= 0)) return false;
+    if (hi && (close === ']' ? compareVersions(mc, hi) > 0 : compareVersions(mc, hi) >= 0)) return false;
+    return true;
+  });
+}
+
+/** mcmod.info (1.12 이하 Forge) */
+function parseMcmodInfo(text) {
+  let j;
+  try {
+    j = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  const mod = Array.isArray(j) ? j[0] : (j.modList || [])[0];
+  if (!mod) return null;
+  return { kind: 'forge', id: mod.modid || null, name: mod.name || mod.modid || null, version: mod.version || null, mcRange: mod.mcversion ? `[${mod.mcversion}]` : null, depends: [], provides: [] };
+}
 
 /** zip(jar) 안에서 필요한 파일만 문자열로 읽는다 */
 function readEntries(file, names = WANTED) {
@@ -93,6 +155,18 @@ async function inspect(file) {
     };
   }
   if (entries['quilt.mod.json']) return { kind: 'quilt', name: null, depends: [] };
+  if (entries['META-INF/mods.toml']) {
+    const m = parseModsToml(entries['META-INF/mods.toml'], entries['META-INF/MANIFEST.MF']);
+    if (m) return m;
+  }
+  if (entries['META-INF/neoforge.mods.toml']) {
+    const m = parseModsToml(entries['META-INF/neoforge.mods.toml'], entries['META-INF/MANIFEST.MF']);
+    if (m) return { ...m, kind: 'neoforge' };
+  }
+  if (entries['mcmod.info']) {
+    const m = parseMcmodInfo(entries['mcmod.info']);
+    if (m) return m;
+  }
   if (entries['pack.mcmeta']) {
     let pack = {};
     try {
@@ -155,13 +229,22 @@ const rangeText = (r) => (Array.isArray(r) ? r.join(', ') : String(r));
 function compat(meta, serverType, mc) {
   if (!meta || !meta.kind) return { status: 'unknown', reason: (meta && meta.error) || '정보 없음' };
   if (serverType === 'paper') {
-    if (meta.kind === 'fabric' || meta.kind === 'quilt') return { status: 'bad', reason: '모드 파일 — 플러그인 서버에서 사용 불가', wrongType: true };
+    if (['fabric', 'quilt', 'forge', 'neoforge'].includes(meta.kind)) return { status: 'bad', reason: '모드 파일 — 플러그인 서버에서 사용 불가', wrongType: true };
     if (meta.kind !== 'plugin') return { status: 'bad', reason: '플러그인 파일 아님', wrongType: true };
     if (!meta.apiVersion) return { status: 'unknown', reason: 'API 버전 표시 없는 구형 플러그인' };
     if (compareVersions(bare(meta.apiVersion), mc) > 0) return { status: 'bad', reason: `마인크래프트 ${meta.apiVersion} 이상 필요` };
     return { status: 'ok', reason: null };
   }
+  if (serverType === 'forge') {
+    if (meta.kind === 'plugin') return { status: 'bad', reason: '플러그인 파일 — 모드 서버에서 사용 불가', wrongType: true };
+    if (meta.kind === 'fabric' || meta.kind === 'quilt') return { status: 'bad', reason: 'Fabric 모드 — Forge 서버에서 사용 불가', wrongType: true };
+    if (meta.kind === 'neoforge') return { status: 'bad', reason: 'NeoForge 전용 모드', wrongType: true };
+    if (meta.kind !== 'forge') return { status: 'bad', reason: 'Forge 모드 파일 아님', wrongType: true };
+    if (!meta.mcRange) return { status: 'unknown', reason: '지원 버전 표시 없음' };
+    return matchesMavenRange(meta.mcRange, mc) ? { status: 'ok', reason: null } : { status: 'bad', reason: `마인크래프트 ${meta.mcRange} 전용` };
+  }
   if (serverType === 'fabric') {
+    if (meta.kind === 'forge' || meta.kind === 'neoforge') return { status: 'bad', reason: 'Forge 모드 — Fabric 서버에서 사용 불가', wrongType: true };
     if (meta.kind === 'plugin') return { status: 'bad', reason: '플러그인 파일 — 모드 서버에서 사용 불가', wrongType: true };
     if (meta.kind === 'quilt') return { status: 'bad', reason: 'Quilt 전용 모드', wrongType: true };
     if (meta.kind !== 'fabric') return { status: 'bad', reason: 'Fabric 모드 파일 아님', wrongType: true };
@@ -194,4 +277,4 @@ function missingDependencies(meta, all) {
   });
 }
 
-module.exports = { inspect, compat, matchesRange, missingDependencies, readEntries };
+module.exports = { inspect, compat, matchesRange, matchesMavenRange, parseModsToml, missingDependencies, readEntries };
