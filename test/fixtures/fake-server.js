@@ -13,7 +13,8 @@ if (process.env.MCES_FAKE_MODE === 'crash') {
 log('Starting minecraft server version 1.21.1');
 fs.mkdirSync('world', { recursive: true });
 if (!fs.existsSync('world/level.dat')) fs.writeFileSync('world/level.dat', 'level');
-setTimeout(() => log('Done (1.234s)! For help, type "help"'), 100);
+// nodone: 준비 완료 줄을 다른 형식으로 내는 서버 흉내
+if (process.env.MCES_FAKE_MODE !== 'nodone') setTimeout(() => log('Done (1.234s)! For help, type "help"'), 100);
 // 앱이 넘긴 -Xlog:gc 처럼 GC 로그를 남긴다 (실제 힙 사용량 측정 확인용)
 fs.mkdirSync('logs', { recursive: true });
 // 힙 측정 에이전트처럼 현재 사용량 파일도 남긴다 (에이전트 값이 GC 로그보다 우선)

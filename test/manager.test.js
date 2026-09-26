@@ -7,6 +7,7 @@ const path = require('path');
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mceasy-mgr-'));
 process.env.MC_EASY_DATA = tmp;
+process.env.MCES_READY_PROBE_MS = '2000'; // 준비 확인 보조를 빨리
 const paths = require('../src/main/paths');
 paths.init(null);
 
@@ -202,4 +203,34 @@ test('설정 명령이 거부되거나 대답이 없으면 알림 · Forge 는 J
   await until(() => m.get(id).status === 'running');
   assert.ok(lines[0].includes('-Dterminal.jline=false'));
   await m.stop(id);
+});
+
+test('준비 완료 줄을 놓쳐도 list 대답으로 켜짐 처리 · 켜지는 중에도 설정 명령 전송', { skip: process.platform === 'win32' }, async () => {
+  const id = 'srv-nodone';
+  fs.mkdirSync(paths.serverDir(id), { recursive: true });
+  fs.writeFileSync(path.join(paths.serverDir(id), 'server.properties'), 'server-port=25993\ndifficulty=easy\n');
+  Servers.save({ id, name: 'n', type: 'forge', version: '1.20.1', build: '47.3.0', javaMajor: 21, memoryMb: 1024, port: 25993, optimize: false, levelName: 'world', addons: [], backup: { enabled: false, keep: 5, onStop: false }, network: { mode: 'tunnel', address: null } });
+  const forgeDir = path.join(paths.serverDir(id), 'libraries', 'net', 'minecraftforge', 'forge', '1.20.1-47.3.0');
+  fs.mkdirSync(forgeDir, { recursive: true });
+  fs.writeFileSync(path.join(forgeDir, 'unix_args.txt'), '-cp x Main');
+  const m = new ServerManager();
+  const lines = [];
+  m.on('console', (c) => lines.push(c.line));
+  process.env.MCES_FAKE_MODE = 'nodone';
+  try {
+    await m.start(id);
+    await new Promise((r) => setTimeout(r, 300));
+    assert.strictEqual(m.get(id).status, 'starting');
+    // 켜지는 중: 명령은 바로 보낸다 (서버가 준비되면 처리)
+    const r = m.updateSettings(id, { difficulty: 'hard' });
+    assert.strictEqual(r.applied.running, true);
+    assert.ok(lines.includes('> difficulty hard'));
+    await until(() => m.get(id).status === 'running', 8000);
+    await m.stop(id);
+  } finally {
+    delete process.env.MCES_FAKE_MODE;
+  }
+  // 꺼진 상태에서 저장하면 콘솔에 안내 줄
+  m.updateSettings(id, { difficulty: 'normal' });
+  assert.ok(lines.some((l) => l.includes('다음 실행 때 적용')));
 });
