@@ -66,6 +66,10 @@
 
   /** 왼쪽 위 표시는 지금 보고 있는 서버(또는 만들고 있는 서버)의 종류를 따른다 */
   function brandType() {
+    if (state.selected === 'new' && state.createMode === 'import') {
+      const d = state.importing && state.importing.det;
+      return (d && d.type) || 'paper';
+    }
     if (state.selected === 'new') return (state.create && state.create.type) || 'paper';
     const s = server();
     return s ? s.type : 'paper';
@@ -1314,7 +1318,21 @@
   }
 
   // ---------- 새 서버 만들기 (마법사가 아니라 한 화면) ----------
+  /** 만들기 화면 머리: 새로 만들기 / 기존 서버 가져오기 전환 */
+  function createHead(title, sub) {
+    return h(
+      'div.create-head',
+      null,
+      h('div', null, h('h1', null, title), h('p', { style: { marginTop: '6px' } }, sub)),
+      seg([{ value: 'new', label: '새로 만들기' }, { value: 'import', label: '기존 서버 가져오기' }], state.createMode || 'new', (v) => {
+        state.createMode = v;
+        render();
+      }),
+    );
+  }
+
   function renderCreate() {
+    if (state.createMode === 'import') return renderImport();
     const specs = state.specs || { recommendedMb: 4096, maxMb: 8192, totalGb: 8 };
     const c = (state.create = state.create || {
       type: 'paper',
@@ -1539,7 +1557,7 @@
       h(
         'div.stack',
         { style: { gap: '22px', maxWidth: '1080px' } },
-        h('div', null, h('h1', null, '새 서버 만들기'), h('p', { style: { marginTop: '6px' } }, '"서버 만들기"를 누르면 Java 확인부터 최적화까지 자동 진행')),
+        createHead('새 서버 만들기', '"서버 만들기"를 누르면 Java 확인부터 최적화까지 자동 진행'),
 
         h('div.card', null, h('div.card-head', null, h('div', null, h('h2', null, '만들기 전에 확인'), h('div.note', null, '이 PC에서 자동 확인'))), h(
           'div.precheck',
@@ -1593,6 +1611,154 @@
     );
     loadVersions();
     refreshCreate();
+    return root;
+  }
+
+  // ---------- 기존 서버 가져오기 (앱 밖에서 만든 서버 폴더) ----------
+  const FLAVOR_NOTE = { Paper: 'Paper', Purpur: 'Purpur (Paper 계열)', Folia: 'Folia (Paper 계열)', Pufferfish: 'Pufferfish (Paper 계열)', Spigot: 'Spigot (Bukkit 계열)', CraftBukkit: 'CraftBukkit', 'Bukkit 계열': 'Bukkit 계열', Fabric: 'Fabric', Forge: 'Forge', Vanilla: '바닐라' };
+
+  function renderImport() {
+    const specs = state.specs || { recommendedMb: 4096, maxMb: 8192, totalGb: 8 };
+    const g = (state.importing = state.importing || { det: null, mode: 'copy', name: '', memoryMb: specs.recommendedMb, optimize: true, eula: false, busy: false, inspecting: false });
+    const root = h('div.main-scroll', { style: { paddingTop: '26px' } });
+    const body = h('div.stack', { style: { gap: '22px' } });
+
+    const inspect = async (dir) => {
+      g.inspecting = true;
+      draw();
+      const det = dir ? await call('servers:inspectImport', dir) : await call('servers:pickImport');
+      g.inspecting = false;
+      if (det && det !== true) {
+        g.det = det;
+        g.name = det.name || '';
+        g.memoryMb = Math.min(specs.maxMb, Math.max(1024, det.memoryMb || specs.recommendedMb));
+        g.eula = !!det.eula;
+      }
+      draw();
+      renderSide();
+    };
+
+    const folderCard = () => {
+      const zone = h(
+        'div.drop-zone',
+        {
+          ondragover: (e) => {
+            e.preventDefault();
+            zone.classList.add('over');
+          },
+          ondragleave: () => zone.classList.remove('over'),
+          ondrop: (e) => {
+            e.preventDefault();
+            zone.classList.remove('over');
+            const p = [...e.dataTransfer.files].map((f) => window.mc.pathForFile && window.mc.pathForFile(f)).find(Boolean);
+            if (p) inspect(p);
+          },
+        },
+        h('span.note', null, g.inspecting ? '폴더 확인 중…' : g.det ? g.det.path : '서버 폴더를 여기에 끌어다 놓기'),
+        button(g.det ? '다른 폴더' : '폴더 선택', () => inspect(null), { small: true, icon: '⌂', disabled: g.inspecting || g.busy }),
+      );
+      return h(
+        'div.card',
+        null,
+        h('div.card-head', null, h('div', null, h('h2', null, '서버 폴더'), h('div.note', null, 'server.properties 와 서버 jar 가 있는 폴더 (Paper · Spigot · Bukkit · Purpur · Fabric · Forge · 바닐라)'))),
+        zone,
+      );
+    };
+
+    const detectedCard = (d) => {
+      const addonName = d.type === 'paper' ? '플러그인' : d.type === 'vanilla' ? null : '모드';
+      return h(
+        'div.card',
+        null,
+        h('div.card-head', null, h('h2', null, '알아낸 정보')),
+        h(
+          'div.list',
+          null,
+          info('종류', `${FLAVOR_NOTE[d.flavor] || d.flavor} → ${TYPE[d.type].label}`),
+          info('버전', d.version),
+          d.jarFile ? info('실행 파일', d.jarFile) : null,
+          addonName ? info(addonName, `${d.addonCount}개 (그대로 사용)`) : null,
+          info('월드', d.worldVersion ? `${d.levelName} · 저장 버전 ${d.worldVersion}` : `${d.levelName} · 없음`),
+          info('포트', String(d.port)),
+          d.memoryFrom ? info('기존 메모리', `${fmt.gb(d.memoryMb)} (${d.memoryFrom})`) : null,
+        ),
+        d.warnings.length ? h('div.stack', { style: { gap: '4px', marginTop: '10px' } }, d.warnings.map((w) => h('span.compat.brass', null, w))) : null,
+      );
+    };
+
+    const bar = progressBar(0);
+    const barLabel = h('span.txt');
+    trackProgress('import', bar, barLabel);
+    const progressBox = h('div.card.progress-line', { class: g.busy ? '' : 'hidden' }, barLabel, bar);
+
+    const run = async () => {
+      if (!g.name.trim()) return toast('서버 이름 필요', { kind: 'error' });
+      if (!g.eula) return toast('EULA 동의 필요', { kind: 'error' });
+      g.busy = true;
+      draw();
+      const s = await call('servers:import', { path: g.det.path, mode: g.mode, name: g.name.trim(), memoryMb: g.memoryMb, optimize: g.optimize, eula: g.eula }, 'import');
+      g.busy = false;
+      if (s && s !== true) {
+        state.importing = null;
+        state.createMode = 'new';
+        if (!state.servers.find((x) => x.id === s.id)) state.servers.push(s);
+        state.javaInstalled = (await call('java:installed')) || state.javaInstalled;
+        toast(`${s.name} 가져오기 완료`, { kind: 'ok', timeout: 6000 });
+        selectServer(s.id);
+        return;
+      }
+      draw();
+    };
+
+    const optionsCard = (d) => {
+      const memMarks = [{ value: specs.recommendedMb, label: `추천 ${fmt.gb(specs.recommendedMb)}` }];
+      const mem = slider({ min: 1024, max: specs.maxMb, step: 512, value: g.memoryMb, onInput: (v) => (g.memoryMb = v), format: fmt.gb, marks: memMarks });
+      mem.classList.add('has-marks');
+      return h(
+        'div.card',
+        null,
+        h('div.card-head', null, h('h2', null, '가져오기 설정')),
+        row(
+          '가져오는 방법',
+          g.mode === 'copy' ? '앱 데이터 폴더로 복사 · 원래 폴더는 그대로 남음' : '원래 폴더를 그대로 사용 · 앱에서 삭제해도 폴더는 남음',
+          seg([{ value: 'copy', label: '복사 (권장)' }, { value: 'inplace', label: '그 자리에서 사용' }], g.mode, (v) => {
+            g.mode = v;
+            draw();
+          }),
+        ),
+        row('서버 이름', '이 앱에서만 표시', input(g.name, (v) => (g.name = v), { maxLength: 40 })),
+        row('메모리', d.memoryFrom ? `기존 실행 파일(${d.memoryFrom}) 값으로 채움` : 'PC 사양 기준 추천값 표시', mem),
+        row('자동 최적화', "Aikar's flags(JVM 옵션)만 적용 · 기존 설정 파일은 그대로", toggle(g.optimize, (v) => (g.optimize = v))),
+      );
+    };
+
+    const draw = () => {
+      const d = g.det;
+      const ok = d && !d.problems.length;
+      const importBtn = button('가져오기', run, { kind: 'primary', icon: '✓', class: 'btn-lg', disabled: !ok || g.busy || !g.eula });
+      put(
+        body,
+        folderCard(),
+        d && d.problems.length ? h('div.card', null, h('div.card-head', null, h('h2', null, '가져올 수 없음')), h('div.stack', { style: { gap: '4px' } }, d.problems.map((p) => h('span.note.bad', null, p)))) : null,
+        ok ? h('div.grid.grid-2', null, detectedCard(d), optionsCard(d)) : null,
+        ok && !d.eula
+          ? h(
+              'div.card.eula',
+              null,
+              checkbox(g.eula, (v) => {
+                g.eula = v;
+                draw();
+              }, '마인크래프트 이용 약관(EULA) 동의 — 이 서버 폴더에는 아직 동의 기록 없음'),
+              button('약관 읽기', () => call('app:openExternal', 'https://aka.ms/MinecraftEULA'), { small: true, kind: 'ghost' }),
+            )
+          : null,
+        progressBox,
+        ok ? h('div.create-bar', null, h('span.note', null, '월드 · 플러그인 · 설정 파일은 그대로 유지'), importBtn) : null,
+      );
+      progressBox.classList.toggle('hidden', !g.busy);
+    };
+    draw();
+    root.append(h('div.stack', { style: { gap: '22px', maxWidth: '1080px' } }, createHead('기존 서버 가져오기', '앱 밖에서 만든 서버를 목록에 추가'), body));
     return root;
   }
 

@@ -18,6 +18,7 @@ const optimize = require('./optimize');
 const modrinth = require('./modrinth');
 const addonMeta = require('./addon-meta');
 const world = require('./world');
+const serverImport = require('./server-import');
 const forge = require('./forge');
 const { fileHash } = require('./http');
 const backup = require('./backup');
@@ -142,7 +143,9 @@ class ServerManager extends EventEmitter {
   }
 
   dir(id) {
-    return paths.serverDir(id);
+    // 가져온 서버를 그 자리에서 쓰는 경우 원래 폴더
+    const s = Servers.get(id);
+    return s && s.externalDir ? s.externalDir : paths.serverDir(id);
   }
 
   // ---------- 조회 ----------
@@ -297,7 +300,7 @@ class ServerManager extends EventEmitter {
       const agent = installAgent(dir) ? optimize.agentArgs() : [];
       i.metrics.memoryMb = null; // 첫 GC 전까지는 측정 중
       // Forge 는 설치 때 만들어진 인자 파일(@...args.txt) 또는 forge jar 로 켠다
-      let launch = ['-jar', 'server.jar'];
+      let launch = ['-jar', server.jarFile || 'server.jar'];
       if (server.type === 'forge') {
         launch = forge.launchArgs(dir, server.version, server.build);
         if (!launch) throw new Error('Forge 실행 파일 없음 — 업데이트 버튼으로 같은 버전을 다시 설치');
@@ -675,11 +678,74 @@ class ServerManager extends EventEmitter {
   async remove(id, { keepBackups = false } = {}) {
     const i = this.inst(id);
     if (i.proc) await this.stop(id);
-    fs.rmSync(this.dir(id), { recursive: true, force: true });
+    // 그 자리에서 가져온 서버는 앱 목록에서만 뺀다 (원래 폴더는 사용자 것)
+    if (!Servers.get(id) || !Servers.get(id).externalDir) fs.rmSync(this.dir(id), { recursive: true, force: true });
     if (!keepBackups) fs.rmSync(paths.serverBackups(id), { recursive: true, force: true });
     Servers.remove(id);
     this.instances.delete(id);
     this.emit('removed', { serverId: id });
+  }
+
+  // ---------- 기존 서버 가져오기 ----------
+  /**
+   * 앱 밖에서 만든 서버 폴더를 목록에 추가한다.
+   * @param {object} o { path, mode: 'copy'(앱 폴더로 복사) | 'inplace'(그 자리에서 사용), name, memoryMb, optimize, eula }
+   */
+  async importExisting(o, onProgress = () => {}) {
+    const src = path.resolve(o.path || '');
+    const det = await serverImport.detect(src);
+    if (det.problems.length) throw new Error(det.problems.join(' · '));
+    const inplace = o.mode === 'inplace';
+    const inside = (a, b) => {
+      const r = path.relative(b, a);
+      return !r || (!r.startsWith('..') && !path.isAbsolute(r));
+    };
+    if (inside(src, paths.dataRoot())) throw new Error('앱 데이터 폴더 안의 서버는 가져올 수 없음');
+    const same = Servers.all().find((s) => s.externalDir && (inside(src, s.externalDir) || inside(s.externalDir, src)));
+    if (same) throw new Error(`이미 "${same.name}" 서버로 추가된 폴더`);
+    if (!det.eula && !o.eula) throw new Error('EULA 동의 필요');
+
+    const id = crypto.randomUUID();
+    const dir = inplace ? src : paths.serverDir(id);
+    try {
+      onProgress({ text: '필요한 Java 버전 확인 중', percent: 0 });
+      const javaMajor = await versions.requiredJava(det.version);
+      await java.ensure(javaMajor, onProgress);
+      if (!inplace) await serverImport.copyTree(src, dir, onProgress);
+      if (det.type === 'forge' && !forge.launchArgs(dir, det.version, det.build)) throw new Error('Forge 실행 파일을 찾지 못함');
+      if (!det.eula) fs.writeFileSync(path.join(dir, 'eula.txt'), `# https://aka.ms/MinecraftEULA 에 동의함 (MCES)\neula=true\n`);
+
+      const memoryMb = Number(o.memoryMb) || det.memoryMb || system.specs().recommendedMb;
+      const server = {
+        id,
+        name: (o.name || '').trim() || det.name,
+        type: det.type,
+        version: det.version,
+        build: det.build || null,
+        loaderVersion: null,
+        javaMajor,
+        memoryMb,
+        port: det.port,
+        optimize: o.optimize !== false,
+        // 원래 쓰던 Paper 설정 파일은 건드리지 않는다
+        optimizedApplied: true,
+        levelName: det.levelName,
+        jarFile: det.jarFile || null,
+        externalDir: inplace ? src : null,
+        imported: { flavor: det.flavor, from: src, mode: inplace ? 'inplace' : 'copy', at: Date.now() },
+        addons: [],
+        backup: { ...DEFAULT_BACKUP },
+        network: { mode: 'tunnel', address: null },
+        createdAt: Date.now(),
+      };
+      Servers.save(server);
+      onProgress({ text: '완료', percent: 1 });
+      this.emitServer(id);
+      return this.get(id);
+    } catch (e) {
+      if (!inplace) fs.rmSync(dir, { recursive: true, force: true });
+      throw e;
+    }
   }
 
   // ---------- 추가 기능 (플러그인 / 모드 / 데이터팩) ----------
@@ -912,7 +978,8 @@ class ServerManager extends EventEmitter {
     }
 
     const versionChanged = targetVersion !== server.version;
-    Servers.update(id, { version: targetVersion, build: jar.build || null, loaderVersion: jar.loader || server.loaderVersion, javaMajor });
+    // 가져온 서버(Spigot 등 다른 jar 이름)도 업데이트 뒤에는 앱이 받은 server.jar 로 켠다
+    Servers.update(id, { version: targetVersion, build: jar.build || null, loaderVersion: jar.loader || server.loaderVersion, javaMajor, jarFile: null });
 
     // 추가 기능: 새 버전에 맞는 파일로 교체, 맞는 게 없으면 비활성화
     if (versionChanged && (server.addons || []).length) {

@@ -83,6 +83,11 @@ data/
 14. **안전한 종료**: 창을 닫아도 서버를 강제 종료하지 않습니다. `stop`으로 저장한 뒤 정지하고 앱을 닫습니다
 15. **오류를 쉬운 말로 번역**: 포트 사용 중, 메모리 부족·과다 할당, Java 버전 불일치, 버전이 맞지 않는 플러그인, 빠진 의존성, Fabric 모드 충돌을 잡아냅니다. "이 플러그인이 현재 버전과 맞지 않아요 → 비활성화할까요?"처럼 해결 버튼과 함께 안내합니다
 16. **업데이트 시 호환성 경고**: 버전을 올리기 전에 Modrinth에서 새 버전에 맞는 파일이 없는 플러그인·모드를 알려줍니다. 업데이트하면 맞는 것은 새 파일로 바꾸고, 안 맞는 것은 꺼 둡니다. 업데이트 전에 월드를 자동으로 백업합니다
+17. **기존 서버 가져오기**: 앱 밖에서 만든 서버 폴더(Paper · Spigot · Bukkit · Purpur · Fabric · Forge · 바닐라)를 목록에 추가합니다. 새 서버 만들기 화면 위의 "기존 서버 가져오기"에서 폴더를 고르거나 끌어다 놓습니다.
+   - 서버 jar, `server.properties`, 로그, `level.dat` 로 종류·버전·포트·월드를 알아내고, `start.bat` 등의 `-Xmx` 값으로 메모리를 채웁니다.
+   - 복사(권장): 앱 데이터 폴더로 복사하고 원래 폴더는 그대로 둡니다. 그 자리에서 사용: 원래 폴더를 그대로 쓰고, 앱에서 삭제해도 폴더는 지우지 않습니다.
+   - 원래 jar(예: `spigot-1.21.1.jar`)로 실행합니다. 기존 Paper 설정 파일은 바꾸지 않고, 자동 최적화는 JVM 옵션만 적용합니다.
+   - Spigot·Bukkit 은 앱에서 업데이트하면 Paper 로 바뀝니다. NeoForge 서버는 아직 지원하지 않습니다.
 
 ## 디자인
 
@@ -101,6 +106,7 @@ data/
 src/main/
   main.js            Electron 창, IPC, 안전한 종료
   server-manager.js  생성·실행·정지·업데이트, 로그 파싱(접속자/TPS), 자동 백업
+  server-import.js   기존 서버 폴더 알아보기·복사
   java.js            Java 감지·설치 (Adoptium)
   versions.js        Paper(Fill v3, v2 대체) / Fabric meta / Mojang 버전·jar
   optimize.js        Aikar's flags, Paper/Spigot/Bukkit 최적값

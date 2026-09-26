@@ -11,6 +11,7 @@ const modrinth = require('./modrinth');
 const reach = require('./reachability');
 const upnp = require('./upnp');
 const { Servers, Settings } = require('./store');
+const serverImport = require('./server-import');
 const { ServerManager } = require('./server-manager');
 const { Tunnel } = require('./tunnel');
 
@@ -99,6 +100,14 @@ function registerIpc() {
   // 서버
   handle('servers:list', () => manager.list());
   handle('servers:create', (opts, key) => manager.create(opts, progressTo(key || 'create')));
+  // 기존 서버 가져오기: 폴더를 골라 알아본 정보를 먼저 보여준다
+  handle('servers:pickImport', async () => {
+    const r = await dialog.showOpenDialog(win, { title: '서버 폴더 선택 (server.properties 가 있는 폴더)', properties: ['openDirectory'] });
+    if (r.canceled) return null;
+    return serverImport.detect(r.filePaths[0]);
+  });
+  handle('servers:inspectImport', (dir) => serverImport.detect(dir));
+  handle('servers:import', (opts, key) => manager.importExisting(opts, progressTo(key || 'import')));
   handle('server:start', (id) => manager.start(id));
   handle('server:stop', (id) => manager.stop(id));
   handle('server:restart', (id) => manager.restart(id));
@@ -107,7 +116,7 @@ function registerIpc() {
   handle('server:console', (id) => manager.consoleLines(id));
   handle('server:history', (id) => manager.history(id));
   handle('server:settings', (id, patch) => manager.updateSettings(id, patch));
-  handle('server:openFolder', (id) => shell.openPath(paths.serverDir(id)));
+  handle('server:openFolder', (id) => shell.openPath(manager.dir(id)));
   handle('server:checkUpdate', (id, v) => manager.checkUpdate(id, v));
   handle('server:applyUpdate', (id, v) => manager.applyUpdate(id, v, progressTo(`update-${id}`)));
 
@@ -151,7 +160,7 @@ function registerIpc() {
     const extra = (await manager.addons(id))
       .filter((a) => a.manual && a.enabled && a.meta && ['fabric', 'forge'].includes(a.meta.kind) && a.meta.environment !== 'server')
       .map((a) => a.fileName);
-    const r = await modrinth.exportModsZip(server, paths.serverDir(id), filePath, extra);
+    const r = await modrinth.exportModsZip(server, manager.dir(id), filePath, extra);
     shell.showItemInFolder(filePath);
     return r;
   });
@@ -269,7 +278,7 @@ function registerIpc() {
         return '최적화 옵션 끄고 재시작 (설정 탭에서 변경 가능)';
       }
       case 'accept-eula': {
-        fs.writeFileSync(path.join(paths.serverDir(id), 'eula.txt'), 'eula=true\n');
+        fs.writeFileSync(path.join(manager.dir(id), 'eula.txt'), 'eula=true\n');
         await manager.start(id);
         return 'EULA 동의 후 재시작';
       }
