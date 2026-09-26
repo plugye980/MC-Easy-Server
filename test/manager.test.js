@@ -56,7 +56,11 @@ test('켜기 → 준비 → 접속자/TPS → 백업 → 저장 후 정지', { s
   assert.strictEqual(m.get(id).players[0].uuid, '069a79f4-44e9-4726-a5be-fca90e38aaf5');
   await until(() => m.get(id).metrics.tps === 19.5);
   // 메모리는 프로세스 크기가 아니라 GC 로그의 실제 힙 사용량
-  await until(() => m.get(id).metrics.memoryMb === 120);
+  await until(() => m.get(id).metrics.memoryMb === 200);
+  // 에이전트를 서버 폴더에 두고 -javaagent 로 넘긴다
+  assert.ok(fs.existsSync(path.join(paths.serverDir(id), 'mces-agent.jar')));
+  assert.ok(consoleLines.some((l) => l.includes('-javaagent:mces-agent.jar=logs/mces-heap.txt')));
+  assert.ok(m.get(id).metrics.cpu <= 100);
   // 앱이 보낸 tps 폴링 응답은 콘솔에 보이지 않는다
   assert.ok(!consoleLines.some((l) => l.includes('TPS from last')));
 

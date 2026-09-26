@@ -76,6 +76,11 @@ test('실제 힙 사용량은 GC 로그에서 읽는다 (RSS 는 AlwaysPreTouch 
   const j8 = '12.3: [GC pause (G1 Evacuation Pause) (young) 204800K->51200K(1048576K), 0.0012 secs]';
   assert.deepStrictEqual(optimize.parseGcLog(j8), { beforeMb: 200, usedMb: 50, committedMb: 1024 });
   assert.strictEqual(optimize.parseGcLog('[0.01s] Using G1'), null);
+  // 에이전트 파일: 현재 사용량, 15초 넘게 갱신 안 됐으면 버린다
+  const now = Date.now();
+  assert.deepStrictEqual(optimize.parseHeapFile(`${512 * 1048576} ${2048 * 1048576} ${12288 * 1048576} ${now}\n`, now), { usedMb: 512, committedMb: 2048, maxMb: 12288 });
+  assert.strictEqual(optimize.parseHeapFile(`1 2 3 ${now - 20000}`, now), null);
+  assert.strictEqual(optimize.parseHeapFile('garbage', now), null);
 });
 
 test('Paper 설정은 생성된 파일에만 주석을 살려 덮어쓴다', () => {
