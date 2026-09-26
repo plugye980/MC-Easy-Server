@@ -1057,10 +1057,26 @@
   function viewSettings(s) {
     const draft = { ...s.settings, name: s.name, memoryMb: s.memoryMb, optimize: s.optimize };
     const specs = state.specs;
-    const set = (k) => (v) => {
-      draft[k] = v;
+    // 바꾸면 바로 저장한다 (연달아 바꾸면 모아서 한 번). 켜져 있으면 명령으로 바로 적용되는 항목은 즉시 반영
+    let timer = null;
+    let saving = false;
+    const scheduleSave = (delay = 450) => {
+      clearTimeout(timer);
+      timer = setTimeout(async () => {
+        if (saving) return scheduleSave(200);
+        saving = true;
+        try {
+          await save();
+        } finally {
+          saving = false;
+        }
+      }, delay);
     };
-    const rules = { changes: {} };
+    const set = (k, delay) => (v) => {
+      draft[k] = v;
+      scheduleSave(delay);
+    };
+    const rules = { changes: {}, onChange: (delay) => scheduleSave(delay) };
     const save = async () => {
       const { levelName, ...rest } = draft;
       const r = await call('server:settings', s.id, rest);
@@ -1074,8 +1090,8 @@
           if (rules.reload) rules.reload();
         }
       }
-      if (!a.running) return toast('저장됨 — 다음 실행 때 적용', { kind: 'ok' });
-      if (!a.now.length && !a.restart.length) return toast('바뀐 설정 없음');
+      if (!a.now.length && !a.restart.length) return;
+      if (!a.running) return toast(`저장됨 (${a.now.join(', ')}) — 다음 실행 때 적용`, { kind: 'ok' });
       const parts = [a.now.length ? `바로 적용: ${a.now.join(', ')}` : null, a.restart.length ? `재시작 후 적용: ${a.restart.join(', ')}` : null].filter(Boolean);
       toast(`저장됨 — ${parts.join(' · ')}`, { kind: 'ok', timeout: a.restart.length ? 7000 : 4000 });
     };
@@ -1093,8 +1109,8 @@
           'div.card',
           null,
           h('div.card-head', null, h('h2', null, '기본 설정')),
-          row('서버 이름', '이 앱에서만 보이는 이름', input(draft.name, set('name'))),
-          row('서버 설명', '서버 목록에 보이는 한 줄', input(draft.motd, set('motd'), { maxLength: 59 })),
+          row('서버 이름', '이 앱에서만 보이는 이름', input(draft.name, set('name', 900))),
+          row('서버 설명', '서버 목록에 보이는 한 줄', input(draft.motd, set('motd', 900), { maxLength: 59 })),
           row('난이도', '몬스터의 세기와 배고픔 속도 · 켜져 있으면 바로 적용', seg(DIFFICULTY, draft.difficulty, set('difficulty'))),
           row('게임 모드', '처음 들어온 사람의 모드 · 켜져 있으면 바로 적용', seg(GAMEMODE, draft.gamemode, set('gamemode'))),
           row('최대 인원', '동시에 들어올 수 있는 사람 수', slider({ min: 2, max: 50, value: draft.maxPlayers, onInput: set('maxPlayers'), format: (v) => `${v}명` })),
@@ -1113,7 +1129,11 @@
             row('화이트리스트', '목록에 넣은 플레이어만 접속 (접속자 탭에서 관리) · 켜져 있으면 바로 적용', toggle(draft.whitelist, set('whitelist'))),
             row('정품 인증', '끄면 복제 계정도 접속 가능 (위험)', toggle(draft.onlineMode, set('onlineMode'))),
             row('스폰 보호 범위', '스폰 주변은 OP만 수정 가능', slider({ min: 0, max: 32, value: draft.spawnProtection, onInput: set('spawnProtection'), format: (v) => (v ? `${v}칸` : '없음') })),
-            row('포트', '보통은 기본값 유지', input(draft.port, (v) => (draft.port = Number(v) || 25565), { type: 'number', min: 1024, max: 65535, style: { maxWidth: '130px' } })),
+            row('포트', '보통은 기본값 유지', input(draft.port, (v) => {
+              const port = Number(v);
+              // 입력 중인 값(예: 25)은 저장하지 않는다
+              if (port >= 1024 && port <= 65535) set('port', 900)(port);
+            }, { type: 'number', min: 1024, max: 65535, style: { maxWidth: '130px' } })),
           ),
           h(
             'div.card',
@@ -1164,7 +1184,7 @@
         'div.create-bar',
         null,
         h('div.inline', null, button('서버 폴더 열기', () => call('server:openFolder', s.id), { icon: '⌂' })),
-        button('설정 저장', save, { kind: 'primary', icon: '✓', class: 'btn-lg' }),
+        h('span.note', null, '바꾸면 바로 저장 · 켜져 있으면 난이도·게임 모드·화이트리스트·게임 규칙은 즉시 적용'),
       ),
     );
   }
@@ -1174,8 +1194,17 @@
     const body = h('div', null, h('span.note', null, '불러오는 중…'));
     const control = (r) => {
       const cur = r.key in rules.changes ? rules.changes[r.key] : r.value;
-      if (r.kind === 'bool') return toggle(cur, (v) => (rules.changes[r.key] = v));
-      return input(cur, (v) => (rules.changes[r.key] = v === '' ? r.value : Number(v)), { type: 'number', min: r.min ?? 0, max: r.max, style: { maxWidth: '110px' } });
+      if (r.kind === 'bool') {
+        return toggle(cur, (v) => {
+          rules.changes[r.key] = v;
+          rules.onChange();
+        });
+      }
+      return input(cur, (v) => {
+        if (v === '' || !Number.isFinite(Number(v))) return;
+        rules.changes[r.key] = Number(v);
+        rules.onChange(900);
+      }, { type: 'number', min: r.min ?? 0, max: r.max, style: { maxWidth: '110px' } });
     };
     const ruleRow = (r) => row(r.label, [r.desc, r.pending ? '다음 실행 때 적용' : null].filter(Boolean).join(' · ') || null, control(r));
     const load = async () => {
