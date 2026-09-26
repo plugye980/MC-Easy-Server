@@ -96,6 +96,45 @@ function readEntries(file, names = WANTED) {
   });
 }
 
+/**
+ * jar 안 클래스 파일이 요구하는 Java 버전(가장 높은 값). 클래스가 없으면 null.
+ * 멀티 릴리스 jar의 META-INF/versions/ 아래는 선택적이므로 뺀다.
+ */
+function javaVersion(file, maxClasses = 40) {
+  return new Promise((resolve) => {
+    yauzl.open(file, { lazyEntries: true, autoClose: true }, (err, zip) => {
+      if (err) return resolve(null);
+      let major = 0;
+      let seen = 0;
+      const done = () => {
+        zip.close();
+        resolve(major ? major - 44 : null);
+      };
+      zip.on('error', () => resolve(null));
+      zip.on('end', () => resolve(major ? major - 44 : null));
+      zip.on('entry', (entry) => {
+        if (!entry.fileName.endsWith('.class') || entry.fileName.startsWith('META-INF/')) return zip.readEntry();
+        zip.openReadStream(entry, (e, stream) => {
+          if (e) return zip.readEntry();
+          const chunks = [];
+          let len = 0;
+          stream.on('data', (c) => {
+            chunks.push(c);
+            len += c.length;
+          });
+          stream.on('end', () => {
+            const b = Buffer.concat(chunks, len);
+            if (b.length >= 8 && b.readUInt32BE(0) === 0xcafebabe) major = Math.max(major, b.readUInt16BE(6));
+            if (++seen >= maxClasses) return done();
+            zip.readEntry();
+          });
+        });
+      });
+      zip.readEntry();
+    });
+  });
+}
+
 function asList(v) {
   if (!v) return [];
   if (Array.isArray(v)) return v.map(String);
@@ -277,4 +316,4 @@ function missingDependencies(meta, all) {
   });
 }
 
-module.exports = { inspect, compat, matchesRange, matchesMavenRange, parseModsToml, missingDependencies, readEntries };
+module.exports = { inspect, javaVersion, compat, matchesRange, matchesMavenRange, parseModsToml, missingDependencies, readEntries };

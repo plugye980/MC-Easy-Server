@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const yazl = require('yazl');
 const { getJson, request, download, fileHash } = require('./http');
+const addonMeta = require('./addon-meta');
 
 const API = 'https://api.modrinth.com/v2';
 
@@ -72,16 +73,37 @@ async function project(idOrSlug) {
   return getJson(`${API}/project/${encodeURIComponent(idOrSlug)}`);
 }
 
-/** 현재 서버 버전·로더에 맞는 가장 최신 버전(정식 우선) */
-async function compatibleVersion(server, projectId, gameVersion = server.version) {
+/** 현재 서버 버전·로더로 표시된 버전들. 정식 먼저, 각각 최신순 */
+async function compatibleVersions(server, projectId, gameVersion = server.version) {
   const params = new URLSearchParams({
     loaders: JSON.stringify(loadersFor(server.type)),
     game_versions: JSON.stringify([gameVersion]),
   });
   const versions = await getJson(`${API}/project/${encodeURIComponent(projectId)}/version?${params}`);
-  if (!versions.length) return null;
-  return versions.find((v) => v.version_type === 'release') || versions[0];
+  const byDate = (a, b) => String(b.date_published || '').localeCompare(String(a.date_published || ''));
+  return [...versions.filter((v) => v.version_type === 'release').sort(byDate), ...versions.filter((v) => v.version_type !== 'release').sort(byDate)];
 }
+
+async function compatibleVersion(server, projectId, gameVersion = server.version) {
+  return (await compatibleVersions(server, projectId, gameVersion))[0] || null;
+}
+
+/**
+ * 받은 파일이 실제로 이 서버에서 돌 수 있는지. 제작자가 Modrinth에 예전 게임 버전까지 붙여 올린
+ * 최신 파일(더 높은 api-version, 더 높은 Java로 빌드)을 걸러낸다. 문제 없으면 null, 있으면 이유.
+ */
+async function fileProblem(server, file) {
+  if (server.type === 'vanilla') return null;
+  const meta = await addonMeta.inspect(file);
+  const c = addonMeta.compat(meta, server.type, server.version);
+  if (c.status === 'bad') return c.reason;
+  const java = await addonMeta.javaVersion(file);
+  if (java && server.javaMajor && java > server.javaMajor) return `Java ${java} 필요 (서버 Java ${server.javaMajor})`;
+  return null;
+}
+
+/** 파일을 받아 확인까지 하는 후보 수 (최신부터) */
+const MAX_TRIES = 6;
 
 function primaryFile(version) {
   return version.files.find((f) => f.primary) || version.files[0];
@@ -97,39 +119,67 @@ async function install(server, serverDir, projectId, onProgress = () => {}, ctx 
   if (ctx.visiting.has(projectId) && !top) return ctx;
   ctx.visiting.add(projectId);
 
-  const [meta, version] = await Promise.all([project(projectId), compatibleVersion(server, projectId)]);
-  if (!version) {
-    const reason = `${server.version} ${{ fabric: 'Fabric', forge: 'Forge', paper: 'Paper' }[server.type] || ''} 버전 없음`;
-    if (top) throw new Error(`"${meta.title}": 현재 서버와 맞는 파일 없음 (${reason.trim()})`);
+  const [meta, candidates] = await Promise.all([project(projectId), compatibleVersions(server, projectId)]);
+  const typeName = { fabric: 'Fabric', forge: 'Forge', paper: 'Paper' }[server.type] || '';
+  const fail = (reason) => {
+    if (top) throw new Error(`"${meta.title}": 현재 서버와 맞는 파일 없음 (${reason})`);
     ctx.skipped.push({ title: meta.title, reason });
     return ctx;
+  };
+  const noVersion = `${`${server.version} ${typeName}`.trim()} 버전 없음`;
+  if (!candidates.length) return fail(noVersion);
+
+  // 최신 후보부터 받아서 실제로 이 서버에서 돌 수 있는 첫 파일을 고른다
+  const folder = path.join(serverDir, addonFolder(server));
+  let version = null;
+  let file = null;
+  let tmp = null;
+  let lastProblem = null;
+  for (const v of candidates.slice(0, MAX_TRIES)) {
+    const f = primaryFile(v);
+    const t = path.join(folder, `${f.filename}.mces-download`);
+    onProgress({ text: `${meta.title} 받는 중`, percent: 0 });
+    await download(f.url, t, {
+      sha512: f.hashes.sha512,
+      onProgress: ({ received, total }) => onProgress({ text: `${meta.title} 받는 중`, percent: total ? received / total : 0 }),
+    });
+    const problem = await fileProblem(server, t);
+    if (!problem) {
+      version = v;
+      file = f;
+      tmp = t;
+      break;
+    }
+    lastProblem = `${v.version_number}: ${problem}`;
+    fs.rmSync(t, { force: true });
   }
+  if (!version) return fail(lastProblem || noVersion);
 
   // 의존성 먼저
-  for (const dep of version.dependencies || []) {
-    if (dep.dependency_type !== 'required') continue;
-    let depProject = dep.project_id;
-    if (!depProject && dep.version_id) {
+  try {
+    for (const dep of version.dependencies || []) {
+      if (dep.dependency_type !== 'required') continue;
+      let depProject = dep.project_id;
+      if (!depProject && dep.version_id) {
+        try {
+          depProject = (await getJson(`${API}/version/${dep.version_id}`)).project_id;
+        } catch { /* 무시 */ }
+      }
+      if (!depProject || ctx.visiting.has(depProject)) continue;
       try {
-        depProject = (await getJson(`${API}/version/${dep.version_id}`)).project_id;
-      } catch { /* 무시 */ }
+        await install(server, serverDir, depProject, onProgress, ctx);
+      } catch (e) {
+        ctx.skipped.push({ title: depProject, reason: e.message });
+      }
     }
-    if (!depProject || ctx.visiting.has(depProject)) continue;
-    try {
-      await install(server, serverDir, depProject, onProgress, ctx);
-    } catch (e) {
-      ctx.skipped.push({ title: depProject, reason: e.message });
-    }
+  } catch (e) {
+    fs.rmSync(tmp, { force: true });
+    throw e;
   }
 
-  const file = primaryFile(version);
-  const folder = path.join(serverDir, addonFolder(server));
   const dest = path.join(folder, file.filename);
-  onProgress({ text: `${meta.title} 설치 중`, percent: 0 });
-  await download(file.url, dest, {
-    sha512: file.hashes.sha512,
-    onProgress: ({ received, total }) => onProgress({ text: `${meta.title} 설치 중`, percent: total ? received / total : 0 }),
-  });
+  fs.renameSync(tmp, dest);
+  onProgress({ text: `${meta.title} 설치 완료`, percent: 1 });
   const addon = {
     projectId: meta.id,
     slug: meta.slug,
@@ -294,6 +344,8 @@ async function exportModsZip(server, serverDir, outFile, extraFiles = []) {
 
 module.exports = {
   loadersFor,
+  compatibleVersions,
+  fileProblem,
   addonFolder,
   searchFacets,
   search,

@@ -106,3 +106,17 @@ test('파일에서 추가 → 목록 · 호환성 · 빠진 의존성 · 업데�
   assert.ok(!fs.existsSync(path.join(paths.serverDir(id), 'plugins', 'Good.jar')));
   assert.ok(!(await m.addons(id)).some((a) => a.title === 'Good'));
 });
+
+test('받은 플러그인이 서버에서 돌 수 있는지 확인 (api-version · Java)', async () => {
+  const { fileProblem } = require('../src/main/modrinth');
+  const cls = (major) => Buffer.from([0xca, 0xfe, 0xba, 0xbe, 0, 0, 0, major]);
+  const server = { type: 'paper', version: '1.21.11', javaMajor: 21 };
+  const ok = await jar('ok.jar', { 'plugin.yml': 'name: A\nversion: 1\napi-version: "1.21"\n', 'a/A.class': cls(65) });
+  const newApi = await jar('api.jar', { 'plugin.yml': 'name: A\nversion: 2\napi-version: "26.1"\n', 'a/A.class': cls(65) });
+  const newJava = await jar('java.jar', { 'plugin.yml': 'name: A\nversion: 3\napi-version: "1.21"\n', 'a/A.class': cls(69), 'META-INF/versions/9/x.class': cls(70) });
+  assert.strictEqual(await meta.javaVersion(ok), 21);
+  assert.strictEqual(await meta.javaVersion(newJava), 25);
+  assert.strictEqual(await fileProblem(server, ok), null);
+  assert.match(await fileProblem(server, newApi), /26\.1 이상 필요/);
+  assert.match(await fileProblem(server, newJava), /Java 25 필요/);
+});
