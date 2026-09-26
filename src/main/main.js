@@ -31,7 +31,7 @@ function createWindow() {
     height: 860,
     minWidth: 1040,
     minHeight: 680,
-    backgroundColor: settings.theme === 'light' ? '#fbfeff' : '#212429',
+    backgroundColor: settings.theme === 'dark' ? '#212429' : '#fbfeff',
     title: 'MCES',
     icon: path.join(__dirname, '..', 'renderer', 'icon.png'),
     autoHideMenuBar: true,
@@ -364,7 +364,7 @@ if (!single) {
 
   app.whenReady().then(() => {
     paths.init(app);
-    nativeTheme.themeSource = Settings.get().theme || 'dark';
+    nativeTheme.themeSource = Settings.get().theme || 'light';
     manager = new ServerManager();
     tunnel = new Tunnel();
     // 저장된 터널 주소 복원
