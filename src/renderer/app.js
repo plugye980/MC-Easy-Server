@@ -509,26 +509,28 @@
   // 개요: TPS 게이지 · 메모리 능선 · 접속자 · 서버 정보
   function viewOverview(s) {
     const running = s.status === 'running';
-    const gauge = Charts.gauge({ size: 220, max: 20 });
-    const tpsText = h('div.stat-value.num.sky');
-    const tpsNote = h('div.note');
-    const memChart = Charts.ridge({ width: 600, height: 170, max: s.memoryMb });
-    const memText = h('span.stat-value.num.sky');
-    const cpuText = h('span.num');
+    const tpsGauge = Charts.gauge({ max: 20, label: 'TPS' });
+    const memGauge = Charts.gauge({ max: 100, label: '메모리' });
+    const cpuGauge = Charts.gauge({ max: 100, label: 'CPU' });
+    const tpsNote = h('span.note');
+    // 5초 간격 측정 → 점 개수로 시간 눈금을 만든다
+    const minutesAgo = (n) => Math.max(1, Math.round(((n - 1) * 5) / 60));
+    const memChart = Charts.ridge({ max: s.memoryMb, tag: 'MEMORY', axis: (n) => (n > 12 ? [`${minutesAgo(n)}분 전`, `${Math.max(1, Math.round(minutesAgo(n) / 2))}분 전`] : ['방금', '']) });
     const memNote = h('span.note');
 
     live.updateMetrics = () => {
       const cur = state.servers.find((x) => x.id === s.id) || s;
       const m = cur.metrics || {};
       const on = cur.status === 'running';
-      gauge.update(on ? m.tps : null);
-      tpsText.textContent = on && m.tps !== null && m.tps !== undefined ? m.tps.toFixed(1) : '–';
-      tpsNote.textContent = !on ? '서버 실행 시 표시' : m.tps === null || m.tps === undefined ? '측정 중…' : m.tps >= 18 ? '쾌적' : m.tps >= 14 ? '조금 느림' : '과부하';
+      const tps = on && typeof m.tps === 'number' ? m.tps : null;
+      tpsGauge.update(tps, tps === null ? '–' : tps.toFixed(1), tps >= 18 ? 'good' : tps >= 14 ? 'warn' : 'bad', '초당 틱');
+      const memPct = on ? ((m.memoryMb || 0) / cur.memoryMb) * 100 : null;
+      memGauge.update(memPct, on ? (m.memoryMb / 1024).toFixed(1) : '–', memPct > 95 ? 'warn' : 'good', `GB / ${fmt.gb(cur.memoryMb)}`);
+      cpuGauge.update(on ? m.cpu || 0 : null, on ? String(m.cpu || 0) : '–', (m.cpu || 0) > 85 ? 'warn' : 'good', '%');
+      tpsNote.textContent = !on ? '서버 실행 시 표시' : tps === null ? '측정 중…' : tps >= 18 ? '쾌적' : tps >= 14 ? '조금 느림' : '과부하';
       const hist = state.history[s.id] || [];
       memChart.update(hist.map((p) => p.memoryMb));
-      memText.textContent = on ? fmt.gb(m.memoryMb || 0) : '–';
-      memNote.textContent = `/ 할당 ${fmt.gb(cur.memoryMb)}`;
-      cpuText.textContent = on ? `CPU ${m.cpu || 0}%` : '';
+      memNote.textContent = `할당 ${fmt.gb(cur.memoryMb)} 기준 · 최근 15분`;
     };
 
     const players = s.players || [];
@@ -541,15 +543,10 @@
         h(
           'div.card',
           null,
-          h('div.card-head', null, h('div', null, h('h2', null, '성능'), h('div.note', null, '초당 틱(TPS). 20에 가까울수록 렉 없음'))),
-          h(
-            'div.grid',
-            { style: { gridTemplateColumns: 'minmax(180px, 240px) 1fr', alignItems: 'center' } },
-            h('div.gauge-wrap', null, gauge, h('div.gauge-center', null, tpsText, h('div.note', null, 'TPS'))),
-            h('div.stack', { style: { gap: '6px' } }, h('div.inline', null, h('span.txt', null, '상태'), tpsNote), h('div.inline', null, memText, memNote), cpuText),
-          ),
+          h('div.card-head', null, h('div', null, h('h2', null, '성능'), h('div.note', null, 'TPS 20에 가까울수록 렉 없음')), tpsNote),
+          h('div.gauges', null, tpsGauge, memGauge, cpuGauge),
         ),
-        h('div.card', null, h('div.card-head', null, h('div', null, h('h2', null, '메모리 사용량'), h('div.note', null, '최근 15분'))), h('div.well.chart-well', null, memChart)),
+        h('div.card', null, h('div.card-head', null, h('div', null, h('h2', null, '메모리 사용량'), memNote)), h('div.chart-well', null, memChart)),
       ),
       h(
         'div.stack',
@@ -966,7 +963,7 @@
     const refresh = async () => {
       const items = await call('backups:list', s.id);
       if (!Array.isArray(items)) return;
-      const reasonLabel = { manual: '직접', auto: '자동', stop: '정지 시', 'before-restore': '복원 전', 'before-update': '업데이트 전' };
+      const reasonLabel = { manual: '직접', auto: '자동', stop: '정지 시', 'before-restore': '복원 전', 'before-update': '업데이트 전', 'before-import': '맵 교체 전', 'before-reset': '월드 재생성 전' };
       put(list, 
         ...(items.length
           ? items.map((b) =>
@@ -1121,12 +1118,186 @@
           }, { small: true }), s.network && s.network.mode === 'upnp' ? button('닫기', () => call('upnp:close', s.id), { small: true, kind: 'ghost' }) : null),
         ),
       ),
+      worldSettingsCard(s),
       h(
         'div.create-bar',
         null,
         h('div.inline', null, button('서버 폴더 열기', () => call('server:openFolder', s.id), { icon: '⌂' })),
         button('설정 저장', save, { kind: 'primary', icon: '✓', class: 'btn-lg' }),
       ),
+    );
+  }
+
+  // ---------- 맵(월드) 설정 편집기 ----------
+  const WORLD_TYPES = [
+    { value: 'normal', label: '기본' },
+    { value: 'flat', label: '평지' },
+    { value: 'large_biomes', label: '큰 바이옴' },
+    { value: 'amplified', label: '증폭' },
+  ];
+  const BLOCKS = [
+    ['bedrock', '기반암'], ['stone', '돌'], ['deepslate', '심층암'], ['dirt', '흙'], ['grass_block', '잔디 블록'], ['sand', '모래'], ['sandstone', '사암'],
+    ['gravel', '자갈'], ['clay', '점토'], ['water', '물'], ['lava', '용암'], ['snow_block', '눈 블록'], ['ice', '얼음'], ['packed_ice', '단단한 얼음'],
+    ['netherrack', '네더랙'], ['end_stone', '엔드 돌'], ['obsidian', '흑요석'], ['glass', '유리'], ['air', '공기'],
+  ];
+  const BIOMES = [
+    ['plains', '평원'], ['ocean', '바다'], ['deep_ocean', '깊은 바다'], ['warm_ocean', '따뜻한 바다'], ['desert', '사막'], ['forest', '숲'], ['taiga', '타이가'],
+    ['snowy_plains', '눈 덮인 평원'], ['jungle', '정글'], ['savanna', '사바나'], ['swamp', '늪'], ['badlands', '악지'], ['mushroom_fields', '버섯 들판'], ['the_void', '공허'],
+  ];
+  // 레이어는 아래층(기반암)부터
+  const FLAT_PRESETS = {
+    classic: { label: '고전 평지', biome: 'plains', layers: [['bedrock', 1], ['dirt', 2], ['grass_block', 1]] },
+    water: { label: '물 세상', biome: 'plains', layers: [['bedrock', 1], ['water', 50]] },
+    ocean: { label: '바다 밑', biome: 'ocean', layers: [['bedrock', 1], ['stone', 5], ['sand', 3], ['water', 40]] },
+    desert: { label: '사막', biome: 'desert', layers: [['bedrock', 1], ['stone', 3], ['sandstone', 52], ['sand', 8]] },
+    void: { label: '공허', biome: 'the_void', layers: [['air', 1]] },
+  };
+  const presetLayers = (key) => FLAT_PRESETS[key].layers.map(([block, height]) => ({ block, height }));
+  const defaultWorld = () => ({ source: 'new', type: 'normal', seed: '', structures: true, flat: { preset: 'classic', biome: 'plains', layers: presetLayers('classic') } });
+
+  /** 월드 유형 · 평지 레이어 · 시드 · 구조물. w 를 그 자리에서 고친다 */
+  function worldEditor(w) {
+    const wrap = h('div.stack', { style: { gap: '4px' } });
+    const draw = () => {
+      const flat = w.type === 'flat';
+      const total = (w.flat.layers || []).reduce((a, l) => a + (Number(l.height) || 0), 0);
+      const layerRows = [...w.flat.layers]
+        .map((l, i) => ({ l, i }))
+        .reverse() // 위층부터 보여준다
+        .map(({ l, i }) =>
+          h(
+            'div.layer-row',
+            null,
+            h('span.note.num', null, i === w.flat.layers.length - 1 ? '맨 위' : i === 0 ? '맨 아래' : `${i + 1}층`),
+            select(BLOCKS.map(([value, label]) => ({ value, label: `${label} (${value})` })), l.block, (v) => {
+              l.block = v;
+              w.flat.preset = 'custom';
+            }),
+            input(l.height, (v) => {
+              l.height = Math.max(1, Math.floor(Number(v) || 1));
+              w.flat.preset = 'custom';
+              totalNote.textContent = totalText();
+            }, { type: 'number', min: 1, max: 384, style: { width: '90px' } }),
+            h('span.note', null, '칸'),
+            button(null, () => {
+              if (w.flat.layers.length <= 1) return toast('레이어 1개 이상 필요', { kind: 'error' });
+              w.flat.layers.splice(i, 1);
+              w.flat.preset = 'custom';
+              draw();
+            }, { small: true, kind: 'ghost', icon: '✕', title: '레이어 삭제' }),
+          ),
+        );
+      const totalText = () => {
+        const t = w.flat.layers.reduce((a, l) => a + (Number(l.height) || 0), 0);
+        return `전체 ${t}칸 · 지면 높이 Y=${-64 + t}${t > 384 ? ' · 최대 384칸 초과' : ''}`;
+      };
+      const totalNote = h(`span.note${total > 384 ? '.bad' : ''}`, null, totalText());
+      put(
+        wrap,
+        row('월드 유형', '평지: 층을 직접 쌓는 맵 · 큰 바이옴: 바이옴이 넓음 · 증폭: 산이 매우 높음', seg(WORLD_TYPES, w.type, (v) => {
+          w.type = v;
+          draw();
+        })),
+        flat
+          ? [
+              row('평지 모양', '예시를 고른 뒤 아래에서 층을 고칠 수 있음', seg([...Object.entries(FLAT_PRESETS).map(([value, p]) => ({ value, label: p.label })), { value: 'custom', label: '직접 설정', disabled: true }], w.flat.preset, (v) => {
+                w.flat.preset = v;
+                w.flat.biome = FLAT_PRESETS[v].biome;
+                w.flat.layers = presetLayers(v);
+                draw();
+              })),
+              row('바이옴', '물 색·날씨·스폰되는 몹이 달라짐', select(BIOMES.map(([value, label]) => ({ value, label: `${label} (${value})` })), w.flat.biome, (v) => {
+                w.flat.biome = v;
+                w.flat.preset = 'custom';
+              })),
+              h(
+                'div.layers',
+                null,
+                h('div.inline', null, h('span.txt', null, '층 (위에서 아래로)'), h('span.spacer'), totalNote, button('맨 위에 층 추가', () => {
+                  w.flat.layers.push({ block: 'stone', height: 1 });
+                  w.flat.preset = 'custom';
+                  draw();
+                }, { small: true, icon: '＋' })),
+                layerRows,
+              ),
+            ]
+          : null,
+        row('시드', '비우면 무작위 · 같은 시드는 같은 지형', input(w.seed, (v) => (w.seed = v.trim()), { placeholder: '무작위', maxLength: 32 })),
+        row('구조물 생성', '마을·요새 등 생성', toggle(w.structures, (v) => (w.structures = v))),
+      );
+    };
+    draw();
+    return wrap;
+  }
+
+  const TYPE_LABEL = { normal: '기본', flat: '평지', large_biomes: '큰 바이옴', amplified: '증폭' };
+
+  /** 설정 탭: 지금 맵 정보 · 다른 맵으로 바꾸기 · 새 설정으로 다시 만들기 */
+  function worldSettingsCard(s) {
+    const info = h('div.stack', { style: { gap: '2px' } }, h('span.note', null, '불러오는 중…'));
+    const stopped = s.status === 'stopped';
+    let current = null;
+    call('world:info', s.id).then((w) => {
+      if (!w || w === true) return;
+      current = w;
+      const flat = w.type === 'flat' && w.flat ? ` · ${w.flat.layers.map((l) => `${l.block}×${l.height}`).join(' / ')}` : '';
+      put(
+        info,
+        h('span.txt', null, `${TYPE_LABEL[w.type] || w.type}${flat}`),
+        h('span.note', null, `${w.seed ? `시드 ${w.seed}` : '시드 무작위'} · 구조물 ${w.structures ? '생성' : '없음'}${w.saved && w.saved.version ? ` · 저장 버전 ${w.saved.version}` : w.exists ? '' : ' · 아직 생성 전(다음 실행 때 생성)'}`),
+      );
+    });
+
+    const importMap = async (kind) => {
+      const r = await call('world:import', s.id, kind);
+      if (!r || r === true) return;
+      const ok = await modal({
+        title: '맵 바꾸기',
+        body: [importSummary(r), h('p.note', null, '현재 월드는 "맵 교체 전" 백업으로 보관 후 교체')],
+        actions: [{ label: '취소', value: false }, { label: r.newer ? '그래도 바꾸기' : '바꾸기', value: true, kind: r.newer ? 'danger' : 'primary' }],
+      });
+      if (!ok) return;
+      const done = await call('world:importConfirm', s.id, r.path);
+      if (done && done !== true) {
+        toast(`맵 교체 완료 — ${done.name}`, { kind: 'ok' });
+        renderTab();
+      }
+    };
+
+    const regenerate = async () => {
+      const base = current || defaultWorld();
+      const w = { ...defaultWorld(), ...base, source: 'new', flat: base.flat ? { preset: 'custom', ...base.flat, layers: base.flat.layers.map((l) => ({ ...l })) } : defaultWorld().flat };
+      const ok = await modal({
+        title: '새 설정으로 월드 다시 만들기',
+        body: [worldEditor(w), h('p.note', null, '현재 월드는 "월드 재생성 전" 백업으로 보관 후 삭제 · 다음 서버 실행 때 새 월드 생성')],
+        actions: [{ label: '취소', value: false }, { label: '다시 만들기', value: true, kind: 'danger' }],
+      });
+      if (!ok) return;
+      if (await call('world:regenerate', s.id, w)) {
+        toast('월드 삭제 · 다음 실행 때 새 설정으로 생성', { kind: 'ok', timeout: 6000 });
+        renderTab();
+      }
+    };
+
+    return h(
+      'div.card',
+      null,
+      h('div.card-head', null, h('div', null, h('h2', null, '맵'), h('div.note', null, stopped ? '맵 교체·재생성 전 현재 월드 자동 백업' : '맵 교체·재생성은 서버를 끈 뒤 가능'))),
+      row('현재 맵', null, info),
+      row('다른 맵으로 바꾸기', '싱글플레이 저장 폴더 또는 zip', h('div.inline', null, button('폴더 선택', () => importMap('folder'), { small: true, disabled: !stopped }), button('zip 선택', () => importMap('zip'), { small: true, disabled: !stopped }))),
+      row('월드 다시 만들기', '월드 유형·평지 층·시드를 바꿔 새로 생성', button('설정하고 다시 만들기', regenerate, { small: true, kind: 'danger', disabled: !stopped })),
+    );
+  }
+
+  /** 맵 가져오기 선택 결과 표시 */
+  function importSummary(info) {
+    if (!info) return h('span.note', null, '선택한 맵 없음');
+    return h(
+      'div.stack',
+      { style: { gap: '2px' } },
+      h('span.txt', null, info.name || '맵'),
+      h('span.note', null, `${info.version ? `저장 버전 ${info.version}` : '저장 버전 확인 불가'} · ${info.path}`),
+      info.newer ? h('span.note.bad', null, '서버보다 새 버전에서 저장된 맵 — 열리지 않거나 손상될 수 있음') : null,
     );
   }
 
@@ -1140,6 +1311,7 @@
       name: '',
       nameAuto: true, // 직접 고치기 전까지 (버전) (종류) 서버 형식으로 따라간다
       motdAuto: true, // 직접 고치기 전까지 서버 이름을 따라간다
+      world: defaultWorld(),
       memoryMb: specs.recommendedMb,
       optimize: true,
       eula: false,
@@ -1171,6 +1343,38 @@
       nameRow.classList.remove('invalid');
       syncAutoMotd();
     };
+    const worldBody = h('div');
+    const drawWorld = () => {
+      const w = c.world;
+      if (w.source === 'import') {
+        const pick = async (kind) => {
+          const r = await call('world:pick', kind, c.version);
+          if (r && r !== true) {
+            w.importPath = r.path;
+            w.importInfo = r;
+            drawWorld();
+          }
+        };
+        put(
+          worldBody,
+          row('가져올 맵', '싱글플레이 저장 폴더(level.dat 가 있는 폴더) 또는 그 폴더를 압축한 zip', h('div.inline', null, button('폴더 선택', () => pick('folder'), { small: true }), button('zip 선택', () => pick('zip'), { small: true }))),
+          h('div.import-info', null, importSummary(w.importInfo)),
+        );
+      } else {
+        put(worldBody, worldEditor(w));
+      }
+    };
+    drawWorld();
+    const worldCard = h(
+      'div.card',
+      null,
+      h('div.card-head', null, h('div', null, h('h2', null, '맵'), h('div.note', null, '새로 만들 맵의 지형 또는 기존 맵 가져오기'))),
+      row('맵 준비', null, seg([{ value: 'new', label: '새 맵 만들기' }, { value: 'import', label: '기존 맵 가져오기' }], c.world.source, (v) => {
+        c.world.source = v;
+        drawWorld();
+      })),
+      worldBody,
+    );
     const nameRow = row('서버 이름', '이 앱에서만 표시 · 비우면 만들 수 없음', nameField);
     const versionBox = h('div');
     const javaBox = h('div.pc-item.well-sm');
@@ -1281,11 +1485,15 @@
         nameField.focus();
         return toast('서버 이름 필요', { kind: 'error' });
       }
+      if (c.world.source === 'import' && !c.world.importPath) {
+        worldCard.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        return toast('가져올 맵 선택 필요', { kind: 'error' });
+      }
       if (!c.eula) return toast('EULA 동의 필요', { kind: 'error' });
       c.busy = true;
       refreshCreate();
       progressBox.classList.remove('hidden');
-      const s = await call('servers:create', { type: c.type, version: c.version, name: c.name.trim(), memoryMb: c.memoryMb, optimize: c.optimize, eula: c.eula, settings: c.settings }, 'create');
+      const s = await call('servers:create', { type: c.type, version: c.version, name: c.name.trim(), memoryMb: c.memoryMb, optimize: c.optimize, eula: c.eula, settings: c.settings, world: c.world }, 'create');
       c.busy = false;
       progressBox.classList.add('hidden');
       refreshCreate();
@@ -1337,6 +1545,8 @@
             row('서버 설명', '서버 목록에 보이는 한 줄 · 기본값은 서버 이름', motdField),
           ),
         ),
+
+        worldCard,
 
         h(
           'div.card.eula',

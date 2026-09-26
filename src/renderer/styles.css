@@ -350,17 +350,6 @@ p { margin: 0; line-height: 1.6; }
 .stat { display: flex; flex-direction: column; gap: 4px; }
 .stat-value { font-size: 2rem; font-weight: 500; line-height: 1.1; filter: var(--lit-text); }
 .stat-unit { font-size: 0.9rem; font-weight: 400; margin-left: 4px; }
-.gauge-wrap { position: relative; display: flex; flex-direction: column; align-items: center; }
-.gauge { width: 100%; max-width: 230px; overflow: visible; }
-.gauge-value { stroke: var(--sky); filter: drop-shadow(0 0 4px var(--sky-glow)) drop-shadow(0 0 10px var(--sky-glow)) drop-shadow(0 0 20px var(--sky-glow)); transition: d 0.6s var(--ease); }
-.gauge-value[data-level="mid"] { stroke: var(--brass); filter: drop-shadow(0 0 4px var(--brass-glow)) drop-shadow(0 0 10px var(--brass-glow)); }
-.gauge-value[data-level="bad"] { stroke: var(--bad); filter: drop-shadow(0 0 4px var(--bad-glow)) drop-shadow(0 0 10px var(--bad-glow)); }
-.gauge-center { position: absolute; bottom: 0; text-align: center; }
-.chart-well { position: relative; height: 170px; overflow: hidden; }
-.ridge { width: 100%; height: 100%; display: block; }
-.ridge-tag { font-family: var(--ui); font-size: 44px; font-weight: 600; letter-spacing: 0.04em; fill: var(--tag); }
-.chart-legend { display: flex; justify-content: space-between; margin-top: 10px; }
-.spark { width: 90px; height: 26px; display: block; }
 
 /* ---------- 목록 ---------- */
 .list { display: flex; flex-direction: column; }
@@ -462,3 +451,55 @@ p { margin: 0; line-height: 1.6; }
 .compat.dim { background-image: var(--grad-dim); }
 .drop-zone { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border-radius: var(--r-md); background: var(--hover); transition: background 0.2s var(--ease), box-shadow 0.2s var(--ease); }
 .drop-zone.over { background: var(--sky-soft); box-shadow: inset 0 0 0 2px var(--sky); }
+
+/* ---------- 그래프: "형태 없는 결" 웹 프리뷰와 같은 어법 ---------- */
+/* 한 단 낮은 면 — 그래프가 놓이는 자리 */
+.chart-well { position: relative; height: 230px; border-radius: var(--radius); background: var(--well); box-shadow: var(--inset); overflow: hidden; }
+.c-area { display: block; width: 100%; height: 100%; }
+.c-area .face { filter: url(#chroma); }
+/* 능선 — 윗면은 빛을 받고, 그 바로 아래는 그늘이 진다 */
+.ridge { stroke-width: 2.4; stroke-linecap: round; }
+.ridge-lit { stroke: var(--ridge-lit); stroke-width: 1.8; stroke-linecap: round; transform: translateY(-1.7px); }
+.ridge-shade { stroke: var(--ridge-shade); stroke-width: 8; stroke-linecap: round; transform: translate(2px, 6px); filter: blur(4.5px); }
+/* 계단 — 단마다 아주 얕은 톤 차이, 끝선만 조금 진하게 */
+.step-face { fill: var(--tier-2); }
+.step-face.step-c { fill: var(--tier-3); }
+.step-lit { stroke: var(--ridge-lit); stroke-width: 1.1; stroke-linecap: round; opacity: 0.3; transform: translateY(-1.4px); }
+.step-edge { stroke: var(--tier-edge); stroke-width: 1.4; stroke-linecap: round; }
+.step-shade { stroke: var(--ridge-shade); stroke-width: 6; stroke-linecap: round; opacity: 0.5; transform: translate(1.5px, 4px); filter: blur(4px); }
+/* 마디 — 같은 색 계열의 조금 더 낮은 명도 */
+.ridge-mark { stroke-width: 2.6; stroke-linecap: round; }
+.v-tag { font-family: var(--ui); font-size: 30px; font-weight: 300; letter-spacing: 0.14em; fill: var(--tag); }
+.v-axis { font-family: var(--ui); font-size: 12px; font-weight: 400; letter-spacing: 0.2em; fill: var(--dim-b); }
+
+/* 원호 게이지 — 깊게 새긴 홈과 빛나는 값 */
+.gauges { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1.2rem; align-items: end; }
+.gauge { margin: 0; }
+.gauge-svg { display: block; width: 100%; max-width: 170px; margin: 0 auto; height: auto; overflow: visible; }
+.gauge .track, .gauge .track-lit, .gauge .track-shade, .gauge .value { fill: none; stroke-linecap: round; }
+.gauge .track-lit { stroke: var(--hi-strong); stroke-width: 9; transform: translateY(2.4px); }
+.gauge .track-shade { stroke: var(--lo-strong); stroke-width: 9; transform: translateY(-2.2px); filter: blur(1px); }
+.gauge .track { stroke: var(--groove); stroke-width: 7; }
+.gauge .value {
+  stroke: var(--sky); stroke-width: 3;
+  filter: url(#chroma) drop-shadow(0 0 4px var(--sky-glow)) drop-shadow(0 0 10px var(--sky-glow)) drop-shadow(0 0 20px var(--sky-glow));
+  transition: stroke-dasharray 1.2s var(--ease), opacity 0.4s var(--ease);
+}
+.gauge[data-level="warn"] .value { stroke: var(--brass); filter: drop-shadow(0 0 4px var(--brass-glow)) drop-shadow(0 0 10px var(--brass-glow)) drop-shadow(0 0 20px var(--brass-glow)); }
+.gauge[data-level="bad"] .value { stroke: var(--bad); filter: drop-shadow(0 0 4px var(--bad-glow)) drop-shadow(0 0 10px var(--bad-glow)); }
+.g-num { font-family: var(--ui); font-size: 28px; font-weight: 400; fill: var(--text-b); font-variant-numeric: tabular-nums; }
+.gauge[data-level="warn"] .g-num { fill: var(--brass-text); }
+.gauge[data-level="bad"] .g-num { fill: var(--bad-text); }
+.g-unit { font-family: var(--ui); font-size: 11px; letter-spacing: 0.16em; fill: var(--dim-a); }
+.gauge figcaption {
+  margin-top: 0.2rem; text-align: center; font-size: var(--fs-note); letter-spacing: 0.2em;
+  background-image: var(--grad-dim); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+}
+
+/* ---------- 맵 설정 ---------- */
+.layers { display: flex; flex-direction: column; gap: 6px; padding: 10px 2px 6px; }
+.layer-row { display: grid; grid-template-columns: 56px minmax(0, 1fr) 90px auto auto; gap: 10px; align-items: center; }
+.layer-row .select { min-width: 0; }
+.import-info { padding: 6px 2px 10px; }
+.modal .row { grid-template-columns: minmax(110px, 0.6fr) minmax(0, 1.6fr); }
+.modal:has(.row) { width: min(760px, calc(100vw - 48px)); }

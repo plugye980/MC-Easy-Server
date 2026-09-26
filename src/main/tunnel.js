@@ -6,13 +6,15 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const os = require('os');
 const { spawn } = require('child_process');
 const { EventEmitter } = require('events');
 const paths = require('./paths');
 const { download, USER_AGENT } = require('./http');
 
-// 1.0.x 는 Windows 서비스(playitd) 구조로 바뀌어 단독 CLI가 없다. 단독 실행되는 마지막 정식판을 고정한다.
-const AGENT_VERSION = '0.17.1';
+// 1.0.x 의 playit-* 실행 파일은 에이전트 데몬(playitd)이다. 서비스로 설치하지 않고 --secret-path 로 앱 안에서 직접 띄운다.
+// (0.17.x 는 playit 서버가 터널 자동 생성을 AgentVersionTooOld 로 거절한다)
+const AGENT_VERSION = '1.0.10';
 const RELEASE = `https://github.com/playit-cloud/playit-agent/releases/download/v${AGENT_VERSION}`;
 const API = 'https://api.playit.gg';
 
@@ -40,6 +42,12 @@ function pickTunnel(rundata, name) {
   const tunnels = (rundata && rundata.tunnels) || [];
   const mc = tunnels.filter((t) => !t.tunnel_type || t.tunnel_type === 'minecraft-java');
   return mc.find((t) => t.name === name) || null;
+}
+
+/** 웹에서 직접 만든 터널도 쓰기: 이름이 달라도 로컬 포트가 서버 포트와 같은 마인크래프트 터널 */
+function pickTunnelByPort(rundata, port) {
+  const tunnels = ((rundata && rundata.tunnels) || []).filter((t) => !t.tunnel_type || t.tunnel_type === 'minecraft-java');
+  return tunnels.find((t) => tunnelLocalPort(t) === Number(port)) || null;
 }
 
 function tunnelLocalPort(t) {
@@ -148,7 +156,10 @@ class Tunnel extends EventEmitter {
           if (secret) {
             fs.mkdirSync(this.dir, { recursive: true });
             fs.writeFileSync(this.secretFile, JSON.stringify({ secret }));
-            this.set({ claimUrl: null, message: null });
+            this.set({ claimUrl: null, message: '연결 승인 완료 — 에이전트 시작' });
+            // 웹이 "에이전트 오프라인"에 머무르지 않도록 바로 띄운다
+            if (!this.proc) this.spawnAgent();
+            this.emit('claimed');
             return secret;
           }
         } catch (e) {
@@ -183,7 +194,7 @@ class Tunnel extends EventEmitter {
       }
     }
     this.set({ agentId: data.agent_id });
-    let t = pickTunnel(data, name);
+    let t = pickTunnel(data, name) || pickTunnelByPort(data, server.port);
     if (!t && !(data.pending || []).some((p) => p.name === name)) {
       const base = { name, tunnel_type: 'minecraft-java', port_type: 'tcp', port_count: 1, enabled: true, alloc: null, firewall_id: null, proxy_protocol: null };
       // 로컬 포트를 지정할 수 있는 agent 방식 → 안 되면 예전 CLI가 쓰던 managed 방식
@@ -193,15 +204,21 @@ class Tunnel extends EventEmitter {
       ];
       let created = false;
       let lastError = null;
-      for (const origin of origins) {
-        try {
-          await this.api('/tunnels/create', { ...base, origin });
-          created = true;
-          break;
-        } catch (e) {
-          lastError = e;
-          this.logLine(`tunnels/create(${origin.type}): ${e.message}`);
+      // 막 켠 에이전트는 새 버전으로 등록되기까지 몇 초 걸린다 → 그동안은 다시 시도
+      for (let attempt = 0; !created && attempt < 15; attempt++) {
+        if (attempt) await sleep(3000);
+        for (const origin of origins) {
+          try {
+            await this.api('/tunnels/create', { ...base, origin });
+            created = true;
+            break;
+          } catch (e) {
+            lastError = e;
+            this.logLine(`tunnels/create(${origin.type}): ${e.message}`);
+          }
         }
+        if (!created && !/AgentVersionTooOld|AgentNotFound|retry/i.test(String(lastError && lastError.message))) break;
+        if (!created) this.set({ message: '에이전트 등록 대기 중' });
       }
       if (!created) {
         throw new Error(`playit 터널 자동 생성 실패 (${lastError && lastError.message}) — https://playit.gg/account/agents/${data.agent_id} 에서 Minecraft Java 터널 추가, 로컬 포트 ${server.port}`);
@@ -239,20 +256,43 @@ class Tunnel extends EventEmitter {
     }
   }
 
+  get secretPath() {
+    return path.join(this.dir, 'agent.secret');
+  }
+
+  /** 다른 playit(서비스 설치판)과 겹치지 않는 IPC 경로 */
+  get socketPath() {
+    if (process.platform === 'win32') return '\\\\.\\pipe\\mces-playit';
+    return path.join(os.tmpdir(), `mces-playit-${process.getuid ? process.getuid() : 'u'}.sock`);
+  }
+
   spawnAgent() {
-    // 비밀키는 명령줄 대신 환경 변수로 넘긴다(작업 관리자에 노출되지 않게)
-    this.proc = spawn(this.bin, ['-s', 'start'], {
+    // 비밀키는 명령줄 대신 파일로 넘긴다(작업 관리자에 노출되지 않게). 형식: 16진 문자열 한 줄
+    fs.writeFileSync(this.secretPath, `${this.readSecret()}\n`, { mode: 0o600 });
+    if (process.platform !== 'win32') fs.rmSync(this.socketPath, { force: true });
+    this.proc = spawn(this.bin, ['--secret-path', this.secretPath, '--socket-path', this.socketPath], {
       cwd: this.dir,
       windowsHide: true,
-      env: { ...process.env, PLAYIT_SECRET: this.readSecret() },
+      env: { ...process.env, NO_COLOR: '1' },
     });
+    const started = Date.now();
     const onData = (buf) => buf.toString().split(/\r?\n/).forEach((l) => this.logLine(l));
     this.proc.stdout.on('data', onData);
     this.proc.stderr.on('data', onData);
     this.proc.on('error', (e) => this.set({ status: 'error', message: `playit 실행 실패: ${e.message}` }));
     this.proc.on('exit', (code) => {
       this.proc = null;
-      if (this.state.status !== 'idle') this.set({ status: code === 0 ? 'idle' : 'error', message: code === 0 ? null : `터널 중지됨 (코드 ${code})` });
+      if (this.state.status === 'idle') return;
+      // 인터넷이 잠깐 끊기면 데몬이 종료된다 → 잠시 뒤 다시 띄운다
+      this.restarts = Date.now() - started > 60000 ? 0 : (this.restarts || 0) + 1;
+      if (this.restarts <= 5) {
+        this.set({ message: `터널 다시 연결 중 (${this.restarts}/5)` });
+        setTimeout(() => {
+          if (!this.proc && this.state.status !== 'idle' && this.readSecret()) this.spawnAgent();
+        }, 5000 * this.restarts);
+      } else {
+        this.set({ status: 'error', message: `터널 중지됨 (코드 ${code}) — 인터넷 연결 확인 후 "터널 연결"` });
+      }
     });
   }
 
@@ -272,8 +312,9 @@ class Tunnel extends EventEmitter {
   reset() {
     this.stop();
     fs.rmSync(this.secretFile, { force: true });
+    fs.rmSync(this.secretPath, { force: true });
     this.set({ addresses: {}, claimUrl: null, agentId: null });
   }
 }
 
-module.exports = { Tunnel, pickTunnel, tunnelLocalPort, playitApi, assetName, AGENT_VERSION };
+module.exports = { Tunnel, pickTunnel, pickTunnelByPort, tunnelLocalPort, playitApi, assetName, AGENT_VERSION };
