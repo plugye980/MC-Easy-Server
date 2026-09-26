@@ -66,6 +66,7 @@ test('규칙 바꾸기: 꺼져 있으면 다음 실행 때, 켜져 있으면 바
   const id = 'srv-rules';
   const dir = paths.serverDir(id);
   fs.mkdirSync(path.join(dir, 'world'), { recursive: true });
+  fs.mkdirSync(path.join(dir, 'world_nether'), { recursive: true }); // Paper: 네더는 따로 된 월드
   fs.writeFileSync(path.join(dir, 'server.properties'), 'server-port=25996\npvp=true\n');
   fs.writeFileSync(path.join(dir, 'world', 'level.dat'), levelDat(compound('GameRules', [str('keepInventory', 'false'), str('doMobSpawning', 'true'), str('pvp', 'true'), str('randomTickSpeed', '3')])));
   Servers.save({ id, name: 'r', type: 'paper', version: '1.21.9', javaMajor: 21, memoryMb: 1024, port: 25996, optimize: false, levelName: 'world', addons: [], backup: { enabled: false, keep: 5, onStop: false }, network: { mode: 'tunnel', address: null } });
@@ -84,19 +85,44 @@ test('규칙 바꾸기: 꺼져 있으면 다음 실행 때, 켜져 있으면 바
   const t0 = Date.now();
   while (m.get(id).status !== 'running' && Date.now() - t0 < 5000) await new Promise((res) => setTimeout(res, 30));
   await new Promise((res) => setTimeout(res, 100));
-  assert.ok(lines.includes('> gamerule keepInventory true'));
-  assert.ok(lines.includes('> gamerule randomTickSpeed 10'));
+  // Paper 는 월드마다 규칙이 따로라 있는 월드 모두에 (엔드 폴더는 없으니 빼고)
+  assert.ok(lines.includes('> execute in minecraft:overworld run gamerule keepInventory true'));
+  assert.ok(lines.includes('> execute in minecraft:the_nether run gamerule keepInventory true'));
+  assert.ok(!lines.some((l) => l.includes('minecraft:the_end')));
+  assert.ok(lines.includes('> execute in minecraft:overworld run gamerule randomTickSpeed 10'));
   g = m.gameRules(id);
   assert.strictEqual(g.common.find((x) => x.key === 'keepInventory').pending, false);
   assert.strictEqual(g.common.find((x) => x.key === 'keepInventory').value, true); // 월드 저장 전에도 바꾼 값
 
   r = m.setGameRules(id, { doMobSpawning: false });
-  assert.ok(lines.includes('> gamerule doMobSpawning false'));
+  assert.ok(lines.includes('> execute in minecraft:the_nether run gamerule doMobSpawning false'));
   assert.deepStrictEqual(r.changed, ['몹 자연 스폰']);
 
   // 1.21.9 이후: PVP 는 규칙 → 켜진 서버에 바로
   const s = m.updateSettings(id, { pvp: false });
-  assert.ok(lines.includes('> gamerule pvp false'));
+  assert.ok(lines.includes('> execute in minecraft:overworld run gamerule pvp false'));
   assert.deepStrictEqual(s.applied.now, ['PVP']);
+  await m.stop(id);
+
+  // 다시 켜면 앱에서 정한 값을 모두 다시 맞춘다 (서버가 저장하지 못하고 꺼졌어도 유지)
+  lines.length = 0;
+  await m.start(id);
+  const t1 = Date.now();
+  while (m.get(id).status !== 'running' && Date.now() - t1 < 5000) await new Promise((res) => setTimeout(res, 30));
+  await new Promise((res) => setTimeout(res, 100));
+  for (const c of ['gamerule keepInventory true', 'gamerule randomTickSpeed 10', 'gamerule doMobSpawning false', 'gamerule pvp false']) {
+    assert.ok(lines.includes(`> execute in minecraft:overworld run ${c}`), c);
+  }
+  await m.stop(id);
+
+  // 바닐라·모드 서버는 규칙이 하나라 그대로 보낸다
+  Servers.update(id, { type: 'vanilla' });
+  lines.length = 0;
+  m.setGameRules(id, { keepInventory: false });
+  await m.start(id);
+  const t2 = Date.now();
+  while (m.get(id).status !== 'running' && Date.now() - t2 < 5000) await new Promise((res) => setTimeout(res, 30));
+  await new Promise((res) => setTimeout(res, 100));
+  assert.ok(lines.includes('> gamerule keepInventory false'));
   await m.stop(id);
 });

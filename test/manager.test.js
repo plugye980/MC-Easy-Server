@@ -107,7 +107,7 @@ test('시작 중 조용히 꺼지면 원인 안내 (출력 없음 · Java 충돌
   }
 });
 
-test('설정 저장: 켜져 있으면 난이도·게임 모드·화이트리스트는 명령어로 바로, 꺼져 있으면 난이도는 다음 실행 때', { skip: process.platform === 'win32' }, async () => {
+test('설정 저장: 켜져 있으면 난이도·게임 모드·화이트리스트는 명령어로 바로, 난이도는 켤 때마다 모든 월드에', { skip: process.platform === 'win32' }, async () => {
   const id = 'srv-settings';
   const dir = paths.serverDir(id);
   fs.mkdirSync(dir, { recursive: true });
@@ -121,19 +121,18 @@ test('설정 저장: 켜져 있으면 난이도·게임 모드·화이트리스�
   // 꺼진 상태: 저장 + 다음 실행 때 difficulty 명령
   let r = m.updateSettings(id, { difficulty: 'hard' });
   assert.strictEqual(r.applied.running, false);
-  assert.strictEqual(Servers.get(id).pendingCommands.difficulty, 'difficulty hard');
   const lines = [];
   m.on('console', (c) => lines.push(c.line));
   await m.start(id);
   await until(() => m.get(id).status === 'running');
-  await until(() => lines.includes('> difficulty hard'));
-  assert.strictEqual(Servers.get(id).pendingCommands, undefined);
+  // 켜질 때마다 모든 월드에 난이도를 맞춘다 (Paper 는 월드마다 따로 저장)
+  await until(() => lines.includes('> execute in minecraft:overworld run difficulty hard'));
 
   // 켜진 상태: 명령어로 바로, 나머지는 재시작 후
   r = m.updateSettings(id, { difficulty: 'peaceful', gamemode: 'creative', maxPlayers: 5, whitelist: false });
   assert.deepStrictEqual(r.applied.now, ['난이도', '게임 모드']);
   assert.deepStrictEqual(r.applied.restart, ['최대 인원']);
-  assert.ok(lines.includes('> difficulty peaceful'));
+  assert.ok(lines.includes('> execute in minecraft:overworld run difficulty peaceful'));
   assert.ok(lines.includes('> defaultgamemode creative'));
   const p = fs.readFileSync(path.join(dir, 'server.properties'), 'utf8');
   assert.match(p, /difficulty=peaceful/);
