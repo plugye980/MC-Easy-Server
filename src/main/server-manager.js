@@ -417,7 +417,9 @@ class ServerManager extends EventEmitter {
       }
       // Forge 는 콘솔 입력을 JLine 터미널로 받는데, 다른 프로그램이 입력을 넘겨 주는 경우(Windows)
       // 명령이 서버에 닿지 않을 수 있다. JLine 을 끄면 표준 입력을 그대로 읽는다.
-      const consoleArgs = server.type === 'forge' ? ['-Dterminal.jline=false', '-Dterminal.ansi=false'] : [];
+      const consoleArgs = server.type === 'forge' || server.type === 'hybrid' ? ['-Dterminal.jline=false', '-Dterminal.ansi=false'] : [];
+      // Windows 는 콘솔 출력을 시스템 코드 페이지(CP949)로 내보내 한글이 깨진다. 앱은 UTF-8 로 읽으므로 맞춘다
+      consoleArgs.push('-Dstdout.encoding=UTF-8', '-Dstderr.encoding=UTF-8', '-Dsun.stdout.encoding=UTF-8', '-Dsun.stderr.encoding=UTF-8');
       const args = [...flags, ...optimize.gcLogArgs(rt.major || server.javaMajor), ...agent, ...consoleArgs, ...launch, 'nogui'];
       this.log(id, `▶ ${path.basename(rt.bin)} ${args.join(' ')}`, 'app');
       const proc = spawn(rt.bin, args, { cwd: dir, windowsHide: true });
@@ -675,7 +677,9 @@ class ServerManager extends EventEmitter {
     i.metrics.processMb = null;
     i.startedAt = null;
     try { pidusage.clear(); } catch { /* 무시 */ }
-    this.log(id, `■ 서버 종료 (종료 코드 ${code === null ? (signal || '없음') : code})`, 'app');
+    // Windows 는 -1 을 4294967295 처럼 부호 없는 값으로 준다
+    const shown = code === null ? signal || '없음' : code > 0x7fffffff ? code - 0x100000000 : code;
+    this.log(id, `■ 서버 종료 (종료 코드 ${shown})`, 'app');
     if (!wasStopping && (code !== 0 || wasStarting)) {
       // 아무것도 출력하지 않고 꺼졌으면 Java 충돌 기록(hs_err_pid*.log)이나 종료 코드로 원인을 짐작한다
       const quiet = !i.outputLines;

@@ -377,3 +377,12 @@ test('워치독 강제 종료 안내 (틱 속도를 너무 높인 경우 등)', 
   // 같은 사고의 뒤따르는 줄은 한 번만 안내
   assert.strictEqual(t.check('[18:47:26] [Server Watchdog/ERROR]: Considering it to be crashed, server will forcibly shutdown.'), null);
 });
+
+test('Mixin 적용 실패 안내 (하이브리드 코어 충돌 · 일반 모드)', () => {
+  const t = new ErrorTranslator();
+  const a = t.check('[21:22:15 FATAL] [mixin]: Mixin apply failed mixins.arclight.core.json:server.MinecraftServerMixin -> net.minecraft.server.MinecraftServer: org.spongepowered...');
+  assert.strictEqual(a.title, '하이브리드 서버와 모드 충돌');
+  const b = t.check('[12:00:00] [main/ERROR] [mixin]: Mixin apply for mod carryon failed carryon.mixins.json:MinecraftServerMixin from mod carryon -> net.minecraft.server.MinecraftServer');
+  assert.strictEqual(b.title, '모드 적용 실패 (Mixin)');
+  assert.deepStrictEqual(b.actions[0].payload, { modId: 'carryon' });
+});
