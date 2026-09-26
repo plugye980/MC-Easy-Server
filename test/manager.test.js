@@ -265,3 +265,15 @@ test('콘솔 기록은 파일에도 남아 앱을 다시 켜도 보인다', { sk
   // 화면에는 지난 기록과 이번 기록이 이어서 보인다
   assert.ok(m2.consoleLines(id).some((l) => l.line === '> say hi'));
 });
+
+test('비정상 종료 알림에 마지막 오류 줄', () => {
+  const { lastErrorLine } = require('../src/main/server-manager');
+  const t = Date.now();
+  const e = (line, kind = 'out') => ({ t, line, kind });
+  assert.strictEqual(lastErrorLine([e('[20:13:30] [main/INFO]: Loading'), e('Exception in thread "main" java.lang.RuntimeException: Mod loading failed'), e('\tat a.b(C.java:1)'), e('[20:13:31] [main/ERROR]: Failed to start the minecraft server'), e('■ 서버 종료', 'app')], t), 'Exception in thread "main" java.lang.RuntimeException: Mod loading failed');
+  assert.strictEqual(lastErrorLine([e('java.lang.RuntimeException: wrap'), e('Caused by: java.lang.ClassNotFoundException: foo.Bar')], t), 'java.lang.ClassNotFoundException: foo.Bar');
+  assert.strictEqual(lastErrorLine([e('[20:13:31] [main/ERROR]: Failed to start the minecraft server')], t), 'Failed to start the minecraft server');
+  assert.strictEqual(lastErrorLine([e('all good')], t), null);
+  // 지난 실행 줄은 보지 않는다
+  assert.strictEqual(lastErrorLine([{ t: t - 1000, line: 'java.lang.Error: old', kind: 'out' }], t), null);
+});

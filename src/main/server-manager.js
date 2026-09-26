@@ -121,6 +121,16 @@ function findCrashReport(dir, since) {
   }
 }
 
+/** 이번 실행에서 서버가 낸 마지막 오류 줄 (예외 이름이나 ERROR 줄). 원인을 담은 "Caused by" 를 우선 */
+function lastErrorLine(entries, since) {
+  const run = entries.filter((e) => e.kind === 'out' && (!since || e.t >= since));
+  const pick = (re) => [...run].reverse().find((e) => re.test(e.line));
+  const hit = pick(/^\s*Caused by: /) || pick(/(?:Exception|Error)(?::|\s|$)/) || pick(/\/(?:ERROR|FATAL)\]|\b(?:ERROR|FATAL|SEVERE)\b/);
+  if (!hit) return null;
+  const text = hit.line.replace(/^(?:\[[^\]]*\]\s*)+:?\s*/, '').replace(/^\s*Caused by:\s*/, '').trim();
+  return text.length > 180 ? `${text.slice(0, 177)}…` : text;
+}
+
 /** 종료 코드를 쉬운 말로. 모르면 null */
 function explainExit(code, { quiet, crash }) {
   if (crash) return 'Java가 충돌로 종료 → 메모리를 낮추거나 최적화 옵션을 끄고 다시 실행. 계속되면 서버 폴더의 hs_err_pid 로그 확인';
@@ -377,6 +387,7 @@ class ServerManager extends EventEmitter {
     i.players.clear();
     this.consoleLines(id); // 앱을 다시 켠 뒤면 지난 기록을 먼저 불러 둔다
     this.openConsoleLog(id);
+    i.runStartedAt = Date.now(); // 이번 실행의 콘솔 줄만 골라 볼 때 쓴다
     this.emitServer(id);
 
     try {
@@ -675,12 +686,13 @@ class ServerManager extends EventEmitter {
       }
       const hint = explainExit(code, { quiet, crash: !!crash });
       if (hint) this.log(id, hint, 'error');
+      const lastError = lastErrorLine(i.console, i.runStartedAt);
       this.emit('alert', {
         serverId: id,
         id: `crash-${Date.now()}`,
         severity: 'error',
         title: wasStarting ? '서버 시작 중 종료' : '서버 비정상 종료',
-        message: hint || '위 안내 먼저 확인. 자세한 로그는 콘솔 탭',
+        message: hint || (lastError ? `마지막 오류: ${lastError}` : '위 안내 먼저 확인. 자세한 로그는 콘솔 탭'),
         actions: [
           { id: 'open-tab', label: '콘솔 보기', payload: { tab: 'console' } },
           ...(crash || quiet ? [{ id: 'open-folder', label: '서버 폴더 열기' }] : []),
@@ -1486,4 +1498,4 @@ class ServerManager extends EventEmitter {
   }
 }
 
-module.exports = { explainExit, findCrashReport, ServerManager, RE };
+module.exports = { lastErrorLine, explainExit, findCrashReport, ServerManager, RE };

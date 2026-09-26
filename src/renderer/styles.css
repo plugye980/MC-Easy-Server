@@ -372,10 +372,10 @@ p { margin: 0; line-height: 1.6; }
 /* ---------- 콘솔 ---------- */
 .console { border-radius: var(--r-md); height: calc(100vh - 330px); min-height: 260px; overflow-y: auto; padding: 16px 18px; font-family: "JetBrains Mono", "Cascadia Mono", Consolas, "D2Coding", monospace; font-size: 0.78rem; line-height: 1.55; background: var(--console); user-select: text; }
 .console-line { white-space: pre-wrap; word-break: break-all; color: var(--body-b); }
-.console-line.warn { color: var(--brass-text); }
-.console-line.error { color: var(--bad-text); }
-.console-line.cmd { color: var(--sky-text); }
-.console-line.app { color: var(--dim-a); }
+.console-line.k-warn { color: var(--brass-text); }
+.console-line.k-error { color: var(--bad-text); }
+.console-line.k-cmd { color: var(--sky-text); }
+.console-line.k-app { color: var(--dim-a); }
 .console-input { display: grid; grid-template-columns: 1fr auto; gap: 10px; margin-top: 14px; }
 
 /* ---------- 새 서버 ---------- */

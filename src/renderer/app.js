@@ -663,7 +663,8 @@
   function appendConsole(box, e, scroll = true) {
     const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
     const kind = e.kind !== 'out' ? e.kind : /\bWARN\b/.test(e.line) ? 'warn' : /\b(ERROR|SEVERE|FATAL)\b|Exception/.test(e.line) ? 'error' : '';
-    box.appendChild(h(`div.console-line${kind ? `.${kind}` : ''}`, null, e.line));
+    // 종류 클래스는 k- 를 붙인다 (.app 은 창 전체 배치에 쓰는 이름이라 겹치면 줄이 화면 높이만큼 커진다)
+    box.appendChild(h(`div.console-line${kind ? `.k-${kind}` : ''}`, null, e.line));
     while (box.childElementCount > 2000) box.firstChild.remove();
     if (scroll && atBottom) box.scrollTop = box.scrollHeight;
   }
