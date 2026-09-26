@@ -1527,7 +1527,7 @@
       put(
         loaderRow,
         MOD_TYPES.includes(c.type)
-          ? row('모드 로더', 'Forge: 대형 콘텐츠 모드(Create 등) 대부분 지원 · Fabric: 가볍고 최신 버전 대응이 빠름', seg([{ value: 'forge', label: 'Forge (기본)' }, { value: 'fabric', label: 'Fabric' }], c.type, (v) => {
+          ? row('모드 로더', [h('div', null, 'Forge: 대형 콘텐츠 모드(Create 등) 대부분 지원'), h('div', null, 'Fabric: 가볍고 최신 버전 대응이 빠름')], seg([{ value: 'forge', label: 'Forge (기본)' }, { value: 'fabric', label: 'Fabric' }], c.type, (v) => {
               c.type = v;
               c.modLoader = v;
               syncAutoName();

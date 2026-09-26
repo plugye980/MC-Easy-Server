@@ -265,7 +265,7 @@ p { margin: 0; line-height: 1.6; }
 /* ---------- 설정 줄 ---------- */
 .row { display: grid; grid-template-columns: minmax(150px, 0.75fr) minmax(0, 1.5fr); gap: 18px; align-items: center; padding: 11px 2px; }
 .row-title { font-weight: 400; }
-.row-desc { font-size: var(--fs-note); margin-top: 3px; line-height: 1.45; }
+.row-desc { font-size: var(--fs-note); margin-top: 3px; line-height: 1.45; word-break: keep-all; overflow-wrap: anywhere; }
 .row-control { display: flex; justify-content: flex-end; align-items: center; gap: 10px; min-width: 0; flex-wrap: wrap; }
 
 /* ---------- 입력 ---------- */

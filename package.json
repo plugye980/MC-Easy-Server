@@ -1,8 +1,8 @@
 {
   "name": "mc-easy-server",
   "productName": "MCES",
-  "version": "0.1.0",
-  "description": "친구들끼리 쓰는 마인크래프트 서버 간편 설치·관리 앱 (Paper / Fabric / Vanilla)",
+  "version": "0.7.0",
+  "description": "마인크래프트 서버 간편 설치·관리 앱 (Paper / Fabric / Vanilla)",
   "main": "src/main/main.js",
   "author": "MCES",
   "license": "MIT",
