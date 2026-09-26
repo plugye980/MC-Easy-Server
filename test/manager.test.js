@@ -106,3 +106,37 @@ test('시작 중 조용히 꺼지면 원인 안내 (출력 없음 · Java 충돌
     delete process.env.MCES_FAKE_MODE;
   }
 });
+
+test('설정 저장: 켜져 있으면 난이도·게임 모드·화이트리스트는 명령어로 바로, 꺼져 있으면 난이도는 다음 실행 때', { skip: process.platform === 'win32' }, async () => {
+  const id = 'srv-settings';
+  const dir = paths.serverDir(id);
+  fs.mkdirSync(dir, { recursive: true });
+  // 예전 서버처럼 숫자로 적힌 난이도
+  fs.writeFileSync(path.join(dir, 'server.properties'), 'server-port=25997\ndifficulty=2\ngamemode=0\nmax-players=20\n');
+  Servers.save({ id, name: 's', type: 'paper', version: '1.21.1', javaMajor: 21, memoryMb: 1024, port: 25997, optimize: false, levelName: 'world', addons: [], backup: { enabled: false, keep: 5, onStop: false }, network: { mode: 'tunnel', address: null } });
+  const m = new ServerManager();
+  assert.strictEqual(m.get(id).settings.difficulty, 'normal');
+  assert.strictEqual(m.get(id).settings.gamemode, 'survival');
+
+  // 꺼진 상태: 저장 + 다음 실행 때 difficulty 명령
+  let r = m.updateSettings(id, { difficulty: 'hard' });
+  assert.strictEqual(r.applied.running, false);
+  assert.strictEqual(Servers.get(id).pendingCommands.difficulty, 'difficulty hard');
+  const lines = [];
+  m.on('console', (c) => lines.push(c.line));
+  await m.start(id);
+  await until(() => m.get(id).status === 'running');
+  await until(() => lines.includes('> difficulty hard'));
+  assert.strictEqual(Servers.get(id).pendingCommands, undefined);
+
+  // 켜진 상태: 명령어로 바로, 나머지는 재시작 후
+  r = m.updateSettings(id, { difficulty: 'peaceful', gamemode: 'creative', maxPlayers: 5, whitelist: false });
+  assert.deepStrictEqual(r.applied.now, ['난이도', '게임 모드']);
+  assert.deepStrictEqual(r.applied.restart, ['최대 인원']);
+  assert.ok(lines.includes('> difficulty peaceful'));
+  assert.ok(lines.includes('> defaultgamemode creative'));
+  const p = fs.readFileSync(path.join(dir, 'server.properties'), 'utf8');
+  assert.match(p, /difficulty=peaceful/);
+  assert.match(p, /max-players=5/);
+  await m.stop(id);
+});

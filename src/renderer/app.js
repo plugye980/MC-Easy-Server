@@ -1063,7 +1063,12 @@
     const save = async () => {
       const { levelName, ...rest } = draft;
       const r = await call('server:settings', s.id, rest);
-      if (r) toast(s.status === 'stopped' ? '저장됨' : '저장됨 — 재시작 시 적용', { kind: 'ok' });
+      if (!r || r === true) return;
+      const a = r.applied || { now: [], restart: [] };
+      if (!a.running) return toast('저장됨 — 다음 실행 때 적용', { kind: 'ok' });
+      if (!a.now.length && !a.restart.length) return toast('바뀐 설정 없음');
+      const parts = [a.now.length ? `바로 적용: ${a.now.join(', ')}` : null, a.restart.length ? `재시작 후 적용: ${a.restart.join(', ')}` : null].filter(Boolean);
+      toast(`저장됨 — ${parts.join(' · ')}`, { kind: 'ok', timeout: a.restart.length ? 7000 : 4000 });
     };
     const memMarks = specs ? [{ value: specs.recommendedMb, label: `추천 ${fmt.gb(specs.recommendedMb)}` }] : null;
     const mem = slider({ min: 1024, max: specs ? specs.maxMb : 8192, step: 512, value: draft.memoryMb, onInput: set('memoryMb'), format: fmt.gb, marks: memMarks });
@@ -1081,8 +1086,8 @@
           h('div.card-head', null, h('h2', null, '게임 규칙')),
           row('서버 이름', '이 앱에서만 보이는 이름', input(draft.name, set('name'))),
           row('서버 설명', '서버 목록에 보이는 한 줄', input(draft.motd, set('motd'), { maxLength: 59 })),
-          row('난이도', '몬스터의 세기와 배고픔 속도', seg(DIFFICULTY, draft.difficulty, set('difficulty'))),
-          row('게임 모드', '처음 들어온 사람의 모드', seg(GAMEMODE, draft.gamemode, set('gamemode'))),
+          row('난이도', '몬스터의 세기와 배고픔 속도 · 켜져 있으면 바로 적용', seg(DIFFICULTY, draft.difficulty, set('difficulty'))),
+          row('게임 모드', '처음 들어온 사람의 모드 · 켜져 있으면 바로 적용', seg(GAMEMODE, draft.gamemode, set('gamemode'))),
           row('최대 인원', '동시에 들어올 수 있는 사람 수', slider({ min: 2, max: 50, value: draft.maxPlayers, onInput: set('maxPlayers'), format: (v) => `${v}명` })),
           row('PVP', '플레이어끼리 공격 가능', toggle(draft.pvp, set('pvp'))),
           row('하드코어', '죽으면 관전자로 전환', toggle(draft.hardcore, set('hardcore'))),
@@ -1096,7 +1101,7 @@
             'div.card',
             null,
             h('div.card-head', null, h('h2', null, '접속 · 보안')),
-            row('화이트리스트', '목록에 넣은 플레이어만 접속 (접속자 탭에서 관리)', toggle(draft.whitelist, set('whitelist'))),
+            row('화이트리스트', '목록에 넣은 플레이어만 접속 (접속자 탭에서 관리) · 켜져 있으면 바로 적용', toggle(draft.whitelist, set('whitelist'))),
             row('정품 인증', '끄면 복제 계정도 접속 가능 (위험)', toggle(draft.onlineMode, set('onlineMode'))),
             row('스폰 보호 범위', '스폰 주변은 OP만 수정 가능', slider({ min: 0, max: 32, value: draft.spawnProtection, onInput: set('spawnProtection'), format: (v) => (v ? `${v}칸` : '없음') })),
             row('포트', '보통은 기본값 유지', input(draft.port, (v) => (draft.port = Number(v) || 25565), { type: 'number', min: 1024, max: 65535, style: { maxWidth: '130px' } })),

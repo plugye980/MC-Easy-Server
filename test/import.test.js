@@ -79,8 +79,15 @@ test('폴더 알아보기: Spigot · 이름 바꾼 Paper · Forge · NeoForge ·
   assert.strictEqual(ff.version, '1.20.1');
   assert.strictEqual(ff.build, '47.3.0');
 
+  // Paper 도 libraries/net/neoforged(플러그인 리매퍼)를 둔다 → 여전히 Paper
+  fs.mkdirSync(path.join(pd, 'libraries', 'net', 'neoforged', 'AutoRenamingTool', '2.0.3'), { recursive: true });
+  fs.mkdirSync(path.join(pd, 'libraries', 'net', 'minecraftforge', 'srgutils', '0.5.6'), { recursive: true });
+  const pp2 = await serverImport.detect(pd);
+  assert.deepStrictEqual(pp2.problems, []);
+  assert.strictEqual(pp2.flavor, 'Paper');
+
   const nd = path.join(tmp, 'neo');
-  fs.mkdirSync(path.join(nd, 'libraries', 'net', 'neoforged'), { recursive: true });
+  fs.mkdirSync(path.join(nd, 'libraries', 'net', 'neoforged', 'neoforge', '21.1.77'), { recursive: true });
   write(path.join(nd, 'server.properties'), '');
   assert.match((await serverImport.detect(nd)).problems[0], /NeoForge/);
 

@@ -131,6 +131,18 @@ function explainExit(code, { quiet, crash }) {
   return null;
 }
 
+/** 켜진 서버에 명령어로 바로 적용할 수 있는 설정 */
+const LIVE_SETTINGS = {
+  difficulty: (v) => `difficulty ${v}`,
+  gamemode: (v) => `defaultgamemode ${v}`,
+  whitelist: (v) => `whitelist ${v ? 'on' : 'off'}`,
+};
+const SETTING_LABELS = {
+  difficulty: '난이도', gamemode: '게임 모드', maxPlayers: '최대 인원', pvp: 'PVP', hardcore: '하드코어', whitelist: '화이트리스트',
+  motd: '서버 설명', port: '포트', onlineMode: '정품 인증', allowFlight: '비행 허용', spawnProtection: '스폰 보호 범위',
+  viewDistance: '시야 거리', simulationDistance: '시뮬레이션 거리', commandBlocks: '커맨드 블록', memoryMb: '메모리', optimize: '자동 최적화',
+};
+
 class ServerManager extends EventEmitter {
   constructor() {
     super();
@@ -450,6 +462,13 @@ class ServerManager extends EventEmitter {
     i.status = 'running';
     this.emitServer(id);
     this.emit('ready', { serverId: id });
+    // 꺼져 있을 때 바꾼 설정 중 명령어로만 월드에 적용되는 것 (난이도)
+    if (server.pendingCommands) {
+      for (const cmd of Object.values(server.pendingCommands)) {
+        try { this.command(id, cmd); } catch { /* 무시 */ }
+      }
+      Servers.update(id, { pendingCommands: undefined });
+    }
     // Paper 설정 파일은 첫 실행 때 생기므로, 생긴 직후 최적값을 넣어 다음 실행부터 적용한다
     if (server.type === 'paper' && server.optimize && !server.optimizedApplied) {
       if (optimize.applyPaperConfigs(this.dir(id))) {
@@ -657,9 +676,16 @@ class ServerManager extends EventEmitter {
   }
 
   // ---------- 설정 ----------
+  /**
+   * 설정 저장. 켜져 있으면 명령어로 바로 바꿀 수 있는 것(난이도·기본 게임 모드·화이트리스트)은 바로 적용한다.
+   * @returns 서버 정보 + applied: { now: string[], restart: string[] } (바뀐 항목 이름)
+   */
   updateSettings(id, patch) {
     const server = Servers.get(id);
     const { memoryMb, name, optimize: opt, backup: bk, network, ...friendly } = patch;
+    const file = path.join(this.dir(id), 'server.properties');
+    const before = props.fromProperties(props.read(file));
+    const changed = Object.keys(friendly).filter((k) => friendly[k] !== undefined && String(friendly[k]) !== String(before[k]));
     const next = { ...server };
     if (memoryMb) next.memoryMb = Number(memoryMb);
     if (name !== undefined) next.name = String(name).trim() || server.name;
@@ -667,11 +693,44 @@ class ServerManager extends EventEmitter {
     if (bk) next.backup = { ...server.backup, ...bk };
     if (network) next.network = { ...server.network, ...network };
     if (friendly.port !== undefined) next.port = Number(friendly.port);
+
+    const running = this.inst(id).status === 'running';
+    const now = [];
+    const restart = [];
+    if (next.name !== server.name) now.push('서버 이름');
+    if (next.memoryMb !== server.memoryMb) restart.push(SETTING_LABELS.memoryMb);
+    if (next.optimize !== server.optimize) restart.push(SETTING_LABELS.optimize);
+    const pending = { ...(server.pendingCommands || {}) };
+    for (const k of changed) {
+      const cmd = LIVE_SETTINGS[k] && LIVE_SETTINGS[k](friendly[k]);
+      if (cmd && running) {
+        this.command(id, cmd);
+        now.push(SETTING_LABELS[k] || k);
+      } else if (cmd && k === 'difficulty') {
+        // Bukkit·Paper 는 기존 월드의 난이도를 level.dat 에서 읽으므로 다음 실행 때 명령어로 맞춘다
+        pending[k] = cmd;
+        now.push(SETTING_LABELS[k]);
+      } else if (!running) {
+        now.push(SETTING_LABELS[k] || k);
+      } else {
+        restart.push(SETTING_LABELS[k] || k);
+      }
+    }
+    if (!running) {
+      // 꺼져 있으면 저장만으로 다음 실행에 반영되므로 전부 "적용"
+      now.push(...restart.splice(0));
+    }
+    next.pendingCommands = Object.keys(pending).length ? pending : undefined;
     Servers.save(next);
-    if (Object.keys(friendly).length) props.write(path.join(this.dir(id), 'server.properties'), props.toProperties(friendly));
+    const values = props.toProperties(friendly);
+    if (Object.keys(values).length) {
+      props.write(file, values);
+      // whitelist 명령은 서버가 자기 설정으로 server.properties 를 다시 쓰므로, 처리된 뒤 한 번 더 쓴다
+      if (running && changed.includes('whitelist')) setTimeout(() => props.write(file, values), 1500);
+    }
     if (bk) this.scheduleBackup(id);
     this.emitServer(id);
-    return this.get(id);
+    return { ...this.get(id), applied: { now, restart, running } };
   }
 
   // ---------- 삭제 ----------

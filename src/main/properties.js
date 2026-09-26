@@ -72,11 +72,20 @@ function toProperties(s) {
   return out;
 }
 
+// 예전 서버는 숫자로 적는다 (difficulty=2, gamemode=0)
+const DIFFICULTY_NAMES = ['peaceful', 'easy', 'normal', 'hard'];
+const GAMEMODE_NAMES = ['survival', 'creative', 'adventure', 'spectator'];
+const named = (v, names, d) => {
+  if (v === undefined || v === '') return d;
+  const x = String(v).trim().toLowerCase();
+  return /^\d$/.test(x) ? names[Number(x)] || d : x;
+};
+
 function fromProperties(p) {
   const num = (k, d) => (p[k] !== undefined && p[k] !== '' ? Number(p[k]) : d);
   return {
-    difficulty: p.difficulty || 'easy',
-    gamemode: p.gamemode || 'survival',
+    difficulty: named(p.difficulty, DIFFICULTY_NAMES, 'easy'),
+    gamemode: named(p.gamemode, GAMEMODE_NAMES, 'survival'),
     maxPlayers: num('max-players', 20),
     pvp: p.pvp === undefined ? true : bool(p.pvp),
     hardcore: bool(p.hardcore),
