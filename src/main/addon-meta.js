@@ -141,14 +141,9 @@ function asList(v) {
   return [String(v)];
 }
 
-/** 파일 정보를 읽는다. 알 수 없는 파일이면 kind: null */
-async function inspect(file) {
-  let entries;
-  try {
-    entries = await readEntries(file);
-  } catch {
-    return { kind: null, error: '압축 파일(jar/zip)이 아님' };
-  }
+/** jar 안에 든 로더별 정보를 모두 모은다 (여러 로더용 jar 는 fabric.mod.json 과 mods.toml 을 함께 담는다) */
+function collectVariants(entries) {
+  const out = [];
   const paper = entries['paper-plugin.yml'];
   const bukkit = entries['plugin.yml'];
   if (paper || bukkit) {
@@ -165,7 +160,7 @@ async function inspect(file) {
       for (const d of y.dependencies) if (d && d.name && d.required !== false) depends.push(d.name);
     }
     depends = [...new Set(depends)];
-    return {
+    out.push({
       kind: 'plugin',
       id: y.name ? String(y.name) : null,
       name: y.name ? String(y.name) : null,
@@ -173,7 +168,7 @@ async function inspect(file) {
       apiVersion: y['api-version'] !== undefined ? String(y['api-version']) : null,
       depends,
       softDepends: asList(y.softdepend),
-    };
+    });
   }
   const fabric = entries['fabric.mod.json'];
   if (fabric) {
@@ -182,7 +177,7 @@ async function inspect(file) {
       j = JSON.parse(fabric);
     } catch { /* 잘못된 json */ }
     const deps = j.depends || {};
-    return {
+    out.push({
       kind: 'fabric',
       id: j.id || null,
       name: j.name || j.id || null,
@@ -191,20 +186,32 @@ async function inspect(file) {
       depends: Object.keys(deps).filter((k) => !['minecraft', 'fabricloader', 'java', 'fabric-loader'].includes(k)),
       provides: Array.isArray(j.provides) ? j.provides : [],
       environment: j.environment || '*',
-    };
+    });
   }
-  if (entries['quilt.mod.json']) return { kind: 'quilt', name: null, depends: [] };
-  if (entries['META-INF/mods.toml']) {
-    const m = parseModsToml(entries['META-INF/mods.toml'], entries['META-INF/MANIFEST.MF']);
-    if (m) return m;
-  }
+  if (entries['quilt.mod.json']) out.push({ kind: 'quilt', name: null, depends: [] });
+  let forge = null;
+  if (entries['META-INF/mods.toml']) forge = parseModsToml(entries['META-INF/mods.toml'], entries['META-INF/MANIFEST.MF']);
+  if (!forge && entries['mcmod.info']) forge = parseMcmodInfo(entries['mcmod.info']);
+  if (forge) out.push(forge);
   if (entries['META-INF/neoforge.mods.toml']) {
     const m = parseModsToml(entries['META-INF/neoforge.mods.toml'], entries['META-INF/MANIFEST.MF']);
-    if (m) return { ...m, kind: 'neoforge' };
+    if (m) out.push({ ...m, kind: 'neoforge' });
   }
-  if (entries['mcmod.info']) {
-    const m = parseMcmodInfo(entries['mcmod.info']);
-    if (m) return m;
+  return out;
+}
+
+/** 파일 정보를 읽는다. 알 수 없는 파일이면 kind: null. 여러 로더용 jar 는 variants 에 로더별 정보 */
+async function inspect(file) {
+  let entries;
+  try {
+    entries = await readEntries(file);
+  } catch {
+    return { kind: null, error: '압축 파일(jar/zip)이 아님' };
+  }
+  const variants = collectVariants(entries);
+  if (variants.length) {
+    const primary = variants[0];
+    return variants.length > 1 ? { ...primary, variants: Object.fromEntries(variants.map((v) => [v.kind, v])) } : primary;
   }
   if (entries['pack.mcmeta']) {
     let pack = {};
@@ -265,7 +272,16 @@ const rangeText = (r) => (Array.isArray(r) ? r.join(', ') : String(r));
  * 서버 종류·버전에 맞는지 판단한다.
  * @returns {{status: 'ok'|'bad'|'unknown', reason: string|null}}
  */
+/** 서버 종류에 맞는 로더 정보 (여러 로더용 jar 에서 고른다) */
+const PREFERRED = { paper: 'plugin', forge: 'forge', fabric: 'fabric' };
+function forServer(meta, serverType) {
+  const want = PREFERRED[serverType];
+  if (!meta || !meta.variants || !want || !meta.variants[want]) return meta;
+  return { ...meta.variants[want], variants: meta.variants };
+}
+
 function compat(meta, serverType, mc) {
+  meta = forServer(meta, serverType);
   if (!meta || !meta.kind) return { status: 'unknown', reason: (meta && meta.error) || '정보 없음' };
   if (serverType === 'paper') {
     if (['fabric', 'quilt', 'forge', 'neoforge'].includes(meta.kind)) return { status: 'bad', reason: '모드 파일 — 플러그인 서버에서 사용 불가', wrongType: true };
@@ -316,4 +332,4 @@ function missingDependencies(meta, all) {
   });
 }
 
-module.exports = { inspect, javaVersion, compat, matchesRange, matchesMavenRange, parseModsToml, missingDependencies, readEntries };
+module.exports = { forServer, inspect, javaVersion, compat, matchesRange, matchesMavenRange, parseModsToml, missingDependencies, readEntries };

@@ -1076,7 +1076,7 @@ class ServerManager extends EventEmitter {
         // Modrinth 로 받은 파일도 안의 이름을 읽어야 의존성 이름(예: EssentialsX → "Essentials")과 맞춰 볼 수 있다
         if (!a.meta) {
           const file = locate(a.fileName);
-          a.meta = file ? await addonMeta.inspect(file) : { kind: null, error: '파일 없음' };
+          a.meta = file ? addonMeta.forServer(await addonMeta.inspect(file), view.type) : { kind: null, error: '파일 없음' };
           if (!a.projectId && a.meta.name) a.title = a.meta.name;
           if (a.meta.version && !a.versionNumber) a.versionNumber = a.meta.version;
         }
@@ -1106,18 +1106,21 @@ class ServerManager extends EventEmitter {
         rejected.push({ file: base, reason: base0.type === 'vanilla' ? '데이터팩(.zip)만 가능' : '.jar 파일만 가능' });
         continue;
       }
-      const meta = await addonMeta.inspect(src);
-      // 하이브리드: 파일 안 정보로 플러그인인지 Forge 모드인지 정해 알맞은 폴더에 넣는다
+      const raw = await addonMeta.inspect(src);
+      // 하이브리드: 파일 안 정보로 플러그인인지 Forge 모드인지 정해 알맞은 폴더에 넣는다 (여러 로더용 jar 도 고려)
+      const has = (k) => raw.kind === k || !!(raw.variants && raw.variants[k]);
       let kind = null;
+      const meta = raw;
       if (base0.type === 'hybrid') {
-        if (meta.kind === 'plugin') kind = 'plugin';
-        else if (meta.kind === 'forge') kind = 'mod';
+        if (has('plugin')) kind = 'plugin';
+        else if (has('forge')) kind = 'mod';
         else {
           rejected.push({ file: base, reason: meta.kind ? `${meta.kind === 'fabric' ? 'Fabric' : meta.kind === 'neoforge' ? 'NeoForge' : meta.kind} 파일 — 하이브리드(Forge) 서버에서 사용 불가` : '플러그인·Forge 모드 파일 아님' });
           continue;
         }
       }
       const server = modrinth.asKind(base0, kind);
+      Object.assign(meta, addonMeta.forServer(raw, server.type));
       const folder = path.join(dir, modrinth.addonFolder(server));
       fs.mkdirSync(folder, { recursive: true });
       const c = addonMeta.compat(meta, server.type, server.version);
