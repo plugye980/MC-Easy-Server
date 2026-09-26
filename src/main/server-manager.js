@@ -81,6 +81,8 @@ async function fetchServerFiles(dir, jar, javaBin, onProgress, jarName = 'server
 }
 
 const MOD_TYPES = ['forge', 'fabric'];
+const CONSOLE_LOG = 'mces-console.log';
+const CONSOLE_LOG_PREV = 'mces-console.prev.log';
 
 const DEFAULT_BACKUP = { enabled: true, intervalMin: 30, keep: 10, onStop: true };
 
@@ -212,8 +214,66 @@ class ServerManager extends EventEmitter {
     return this.inst(id).metrics.history;
   }
 
+  /** 콘솔 기록. 앱을 다시 켜 메모리가 비었으면 파일(logs/mces-console.log)에서 불러온다 */
   consoleLines(id) {
-    return this.inst(id).console;
+    const i = this.inst(id);
+    if (i.console.length || !Servers.get(id)) return i.console;
+    const logs = path.join(this.dir(id), 'logs');
+    for (const name of [CONSOLE_LOG, CONSOLE_LOG_PREV]) {
+      let text;
+      try {
+        text = fs.readFileSync(path.join(logs, name), 'utf8');
+      } catch {
+        continue;
+      }
+      const lines = text.split(/\r?\n/).filter(Boolean).slice(-1999);
+      if (!lines.length) continue;
+      const t = fs.statSync(path.join(logs, name)).mtimeMs;
+      i.console = [
+        { t, line: `── 지난 실행 기록 (logs/${name}) ──`, kind: 'app' },
+        ...lines.map((l) => {
+          const m = /^\[MCES:(\w+)\] (.*)$/.exec(l);
+          return m ? { t, line: m[2], kind: m[1] } : { t, line: l, kind: 'out' };
+        }),
+      ];
+      break;
+    }
+    return i.console;
+  }
+
+  /** 켤 때마다 새 기록 파일을 연다 (직전 실행 기록은 mces-console.prev.log 로 남김) */
+  openConsoleLog(id) {
+    const i = this.inst(id);
+    this.closeConsoleLog(id);
+    const logs = path.join(this.dir(id), 'logs');
+    try {
+      fs.mkdirSync(logs, { recursive: true });
+      const file = path.join(logs, CONSOLE_LOG);
+      if (fs.existsSync(file)) fs.renameSync(file, path.join(logs, CONSOLE_LOG_PREV));
+      i.logStream = fs.createWriteStream(file, { flags: 'a' });
+      i.logStream.on('error', () => (i.logStream = null));
+    } catch {
+      i.logStream = null;
+    }
+  }
+
+  closeConsoleLog(id) {
+    const i = this.inst(id);
+    if (i.logStream) i.logStream.end();
+    i.logStream = null;
+  }
+
+  /** 콘솔 한 줄을 파일에도 남긴다. 앱이 쓴 줄은 [MCES:종류] 를 붙여 다시 불러올 때 구분한다 */
+  writeConsoleFile(id, entry) {
+    const i = this.inst(id);
+    const text = `${entry.kind === 'out' ? '' : `[MCES:${entry.kind}] `}${entry.line}\n`;
+    if (i.logStream) return i.logStream.write(text);
+    try {
+      const logs = path.join(this.dir(id), 'logs');
+      if (!Servers.get(id) || !fs.existsSync(this.dir(id))) return;
+      fs.mkdirSync(logs, { recursive: true });
+      fs.appendFileSync(path.join(logs, CONSOLE_LOG), text);
+    } catch { /* 기록 실패는 무시 */ }
   }
 
   emitServer(id) {
@@ -315,6 +375,8 @@ class ServerManager extends EventEmitter {
     i.status = 'starting';
     i.translator.reset();
     i.players.clear();
+    this.consoleLines(id); // 앱을 다시 켠 뒤면 지난 기록을 먼저 불러 둔다
+    this.openConsoleLog(id);
     this.emitServer(id);
 
     try {
@@ -406,6 +468,7 @@ class ServerManager extends EventEmitter {
       i.status = 'stopped';
       i.proc = null;
       this.log(id, `시작 실패: ${e.message}`, 'error');
+      this.closeConsoleLog(id);
       this.emit('alert', {
         serverId: id,
         id: `start-failed-${Date.now()}`,
@@ -422,7 +485,10 @@ class ServerManager extends EventEmitter {
   log(id, line, kind = 'out') {
     const i = this.inst(id);
     const entry = { t: Date.now(), line, kind };
+    // 앱을 다시 켠 뒤라면 지난 기록부터 불러 두고 이어 붙인다
+    if (!i.console.length) this.consoleLines(id);
     i.console.push(entry);
+    this.writeConsoleFile(id, entry);
     if (i.console.length > 2000) i.console.splice(0, i.console.length - 2000);
     this.emit('console', { serverId: id, ...entry });
   }
@@ -635,6 +701,7 @@ class ServerManager extends EventEmitter {
       }
     }
     i.ranLongEnough = false;
+    this.closeConsoleLog(id);
   }
 
   /** 저장 후 정지. timeout 안에 안 꺼지면 그때만 강제 종료한다. */
@@ -951,6 +1018,7 @@ class ServerManager extends EventEmitter {
   async remove(id, { keepBackups = false } = {}) {
     const i = this.inst(id);
     if (i.proc) await this.stop(id);
+    this.closeConsoleLog(id);
     // 그 자리에서 가져온 서버는 앱 목록에서만 뺀다 (원래 폴더는 사용자 것)
     if (!Servers.get(id) || !Servers.get(id).externalDir) fs.rmSync(this.dir(id), { recursive: true, force: true });
     if (!keepBackups) fs.rmSync(paths.serverBackups(id), { recursive: true, force: true });

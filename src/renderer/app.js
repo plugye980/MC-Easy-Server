@@ -651,7 +651,13 @@
         box.scrollTop = box.scrollHeight;
       });
     }
-    return h('div.card', null, box, h('div.console-input', null, field, button('보내기', send, { kind: 'primary', disabled: s.status !== 'running' })));
+    return h(
+      'div.card',
+      null,
+      box,
+      h('div.console-input', null, field, button('보내기', send, { kind: 'primary', disabled: s.status !== 'running' })),
+      h('div.inline', { style: { marginTop: '10px', justifyContent: 'space-between' } }, h('span.note', null, '콘솔 내용은 logs/mces-console.log 에도 저장 (직전 실행은 mces-console.prev.log)'), button('로그 폴더 열기', () => call('server:openLogs', s.id), { small: true, kind: 'ghost', icon: '⌂' })),
+    );
   }
 
   function appendConsole(box, e, scroll = true) {

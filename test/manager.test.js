@@ -234,3 +234,34 @@ test('준비 완료 줄을 놓쳐도 list 대답으로 켜짐 처리 · 켜지�
   m.updateSettings(id, { difficulty: 'normal' });
   assert.ok(lines.some((l) => l.includes('다음 실행 때 적용')));
 });
+
+test('콘솔 기록은 파일에도 남아 앱을 다시 켜도 보인다', { skip: process.platform === 'win32' }, async () => {
+  const id = 'srv-log';
+  fs.mkdirSync(paths.serverDir(id), { recursive: true });
+  fs.writeFileSync(path.join(paths.serverDir(id), 'server.properties'), 'server-port=25991\n');
+  Servers.save({ id, name: 'l', type: 'paper', version: '1.21.1', javaMajor: 21, memoryMb: 1024, port: 25991, optimize: false, levelName: 'world', addons: [], backup: { enabled: false, keep: 5, onStop: false }, network: { mode: 'tunnel', address: null } });
+  const m = new ServerManager();
+  await m.start(id);
+  await until(() => m.get(id).status === 'running');
+  m.command(id, 'say hi');
+  await m.stop(id);
+  const file = path.join(paths.serverDir(id), 'logs', 'mces-console.log');
+  assert.match(fs.readFileSync(file, 'utf8'), /Done \(1\.234s\)/);
+
+  // 앱을 다시 켠 것처럼 새 관리자: 메모리는 비었지만 파일에서 불러온다
+  const m2 = new ServerManager();
+  const lines = m2.consoleLines(id);
+  assert.match(lines[0].line, /지난 실행 기록/);
+  assert.ok(lines.some((l) => /Starting minecraft server/.test(l.line) && l.kind === 'out'));
+  assert.ok(lines.some((l) => l.line === '> say hi' && l.kind === 'cmd'));
+  assert.ok(lines.some((l) => /■ 서버 종료/.test(l.line) && l.kind === 'app'));
+
+  // 다시 켜면 직전 기록은 prev 로 옮기고 새 파일에 이어 쓴다
+  await m2.start(id);
+  await until(() => m2.get(id).status === 'running');
+  await m2.stop(id);
+  assert.match(fs.readFileSync(path.join(paths.serverDir(id), 'logs', 'mces-console.prev.log'), 'utf8'), /\[MCES:cmd\] > say hi/);
+  assert.ok(!/say hi/.test(fs.readFileSync(file, 'utf8')));
+  // 화면에는 지난 기록과 이번 기록이 이어서 보인다
+  assert.ok(m2.consoleLines(id).some((l) => l.line === '> say hi'));
+});

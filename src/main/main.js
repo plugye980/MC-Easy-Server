@@ -119,6 +119,11 @@ function registerIpc() {
   handle('server:gameRules', (id) => manager.gameRules(id));
   handle('server:setGameRules', (id, changes) => manager.setGameRules(id, changes));
   handle('server:openFolder', (id) => shell.openPath(manager.dir(id)));
+  handle('server:openLogs', (id) => {
+    const dir = path.join(manager.dir(id), 'logs');
+    fs.mkdirSync(dir, { recursive: true });
+    return shell.openPath(dir);
+  });
   handle('server:checkUpdate', (id, v) => manager.checkUpdate(id, v));
   handle('server:applyUpdate', (id, v) => manager.applyUpdate(id, v, progressTo(`update-${id}`)));
 
