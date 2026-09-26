@@ -132,6 +132,9 @@ function explainExit(code, { quiet, crash }) {
   return null;
 }
 
+/** 이보다 높은 /tick rate 는 경고 (기본 20) */
+const TICK_RATE_WARN = 100;
+
 /** 켜진 서버에 명령어로 바로 적용할 수 있는 설정 */
 const LIVE_SETTINGS = {
   difficulty: (v) => `difficulty ${v}`,
@@ -646,6 +649,23 @@ class ServerManager extends EventEmitter {
     if (!clean) return;
     this.log(id, `> ${clean}`, 'cmd');
     i.proc.stdin.write(`${clean}\n`);
+    // 틱 속도를 크게 올리면 서버가 따라가지 못해 뒤처짐이 쌓이고, 60초가 넘으면 워치독이 서버를 끈다
+    const t = /^(?:minecraft:)?tick\s+rate\s+([\d.]+)/i.exec(clean);
+    if (t && Number(t[1]) > TICK_RATE_WARN) {
+      this.emit('alert', {
+        serverId: id,
+        id: `tick-rate-${Date.now()}`,
+        severity: 'warn',
+        title: '틱 속도가 매우 높음',
+        message: `틱 속도 ${t[1]} → 서버가 따라가지 못하면 뒤처짐이 쌓여 약 60초 뒤 워치독이 서버를 강제 종료함`,
+        actions: [{ id: 'reset-tick-rate', label: '20으로 되돌리기' }],
+      });
+    }
+  }
+
+  /** 다음에 켜질 때 보낼 명령 (같은 key 는 덮어씀) */
+  queueCommand(id, key, cmd) {
+    Servers.update(id, (s) => ({ ...s, pendingCommands: { ...(s.pendingCommands || {}), [key]: cmd } }));
   }
 
   // ---------- 접속자 ----------

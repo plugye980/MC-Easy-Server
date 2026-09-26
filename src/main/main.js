@@ -261,6 +261,16 @@ function registerIpc() {
         manager.updateSettings(id, { memoryMb: mb });
         return `메모리 ${(mb / 1024).toFixed(1)}GB로 변경 — 재시작 시 적용`;
       }
+      case 'reset-tick-rate': {
+        // /tick rate 는 월드에 남을 수 있으므로 켜진 뒤 명령으로 되돌린다
+        if (manager.get(id).status === 'running') {
+          manager.command(id, 'tick rate 20');
+          return '틱 속도 20으로 되돌림';
+        }
+        manager.queueCommand(id, 'tickRate', 'tick rate 20');
+        await manager.start(id);
+        return '켜진 뒤 틱 속도 20으로 되돌림';
+      }
       case 'lower-view': {
         const cur = manager.get(id).settings;
         const view = Math.max(4, cur.viewDistance - 2);

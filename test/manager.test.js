@@ -140,3 +140,22 @@ test('설정 저장: 켜져 있으면 난이도·게임 모드·화이트리스�
   assert.match(p, /max-players=5/);
   await m.stop(id);
 });
+
+test('높은 /tick rate 입력 시 경고', { skip: process.platform === 'win32' }, async () => {
+  const id = 'srv-tick';
+  fs.mkdirSync(paths.serverDir(id), { recursive: true });
+  fs.writeFileSync(path.join(paths.serverDir(id), 'server.properties'), 'server-port=25995\n');
+  Servers.save({ id, name: 't', type: 'vanilla', version: '26.3', javaMajor: 21, memoryMb: 1024, port: 25995, optimize: false, levelName: 'world', addons: [], backup: { enabled: false, keep: 5, onStop: false }, network: { mode: 'tunnel', address: null } });
+  const m = new ServerManager();
+  const alerts = [];
+  m.on('alert', (a) => alerts.push(a));
+  await m.start(id);
+  await until(() => m.get(id).status === 'running');
+  m.command(id, '/tick rate 20');
+  assert.strictEqual(alerts.length, 0);
+  m.command(id, '/tick rate 10000');
+  assert.strictEqual(alerts[0].title, '틱 속도가 매우 높음');
+  m.queueCommand(id, 'tickRate', 'tick rate 20');
+  assert.strictEqual(Servers.get(id).pendingCommands.tickRate, 'tick rate 20');
+  await m.stop(id);
+});

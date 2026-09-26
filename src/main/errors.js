@@ -154,6 +154,21 @@ const RULES = [
     }),
   },
   {
+    // 한 틱이 max-tick-time(기본 60초)을 넘기면 워치독이 서버를 멈춘 것으로 보고 끈다.
+    // /tick rate 를 너무 높이면 서버가 목표를 못 따라가 뒤처짐이 쌓여 같은 일이 생긴다.
+    id: 'watchdog',
+    test: /A single server tick took ([\d.]+) seconds|Considering it to be crashed, server will forcibly shutdown|Watchdog \(Watching Server\)/i,
+    build: (line, m) => ({
+      severity: 'error',
+      title: '서버 멈춤으로 강제 종료 (워치독)',
+      message: `한 번의 처리(틱)가 ${m[1] ? `${Math.round(Number(m[1]))}초` : '너무 오래'} 끝나지 않아 서버가 스스로 종료 → /tick rate 를 올렸다면 기본값(20)으로 되돌리기, 아니면 시야 거리 줄이기`,
+      actions: [
+        { id: 'reset-tick-rate', label: '틱 속도 20으로 되돌리고 다시 켜기' },
+        { id: 'lower-view', label: '시야 거리 2칸 줄이기' },
+      ],
+    }),
+  },
+  {
     id: 'overloaded',
     test: /Can't keep up! Is the server overloaded\?/i,
     cooldown: 5 * 60 * 1000,
