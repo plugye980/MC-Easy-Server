@@ -263,7 +263,7 @@ async function installByName(server, serverDir, name, onProgress) {
     }
     const top = r.installed[r.installed.length - 1];
     if (server.type === 'vanilla' || !top) return r;
-    const meta = await addonMeta.inspect(path.join(folder, top.fileName));
+    const meta = addonMeta.forServer(await addonMeta.inspect(path.join(folder, top.fileName)), server.type);
     if (providesName(meta, name) !== false) return r;
     // 이름이 다른 플러그인이었다: 이번에 새로 받은 파일만 지운다
     for (const a of r.installed) if (!before.has(a.fileName)) fs.rmSync(path.join(folder, a.fileName), { force: true });

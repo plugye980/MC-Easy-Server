@@ -120,3 +120,21 @@ test('받은 플러그인이 서버에서 돌 수 있는지 확인 (api-version 
   assert.match(await fileProblem(server, newApi), /26\.1 이상 필요/);
   assert.match(await fileProblem(server, newJava), /Java 25 필요/);
 });
+
+test('여러 로더용 jar (Fabric + Forge 정보를 함께 담은 파일)는 서버 종류에 맞는 정보로 판단', async () => {
+  const f = await jar('spawnanimations-multi.jar', {
+    'fabric.mod.json': '{"id":"spawnanimations","name":"Spawn Animations","version":"1.10","depends":{"minecraft":">=1.17"}}',
+    'META-INF/mods.toml': 'modLoader="javafml"\nloaderVersion="[40,)"\n[[mods]]\nmodId="spawnanimations"\nversion="1.10"\ndisplayName="Spawn Animations"\n[[dependencies.spawnanimations]]\nmodId="minecraft"\nmandatory=true\nversionRange="[1.17,)"\n',
+    'META-INF/neoforge.mods.toml': '[[mods]]\nmodId="spawnanimations"\n',
+  });
+  const m = await meta.inspect(f);
+  assert.deepStrictEqual(Object.keys(m.variants).sort(), ['fabric', 'forge', 'neoforge']);
+  assert.strictEqual(meta.compat(m, 'forge', '1.20.1').status, 'ok');
+  assert.strictEqual(meta.compat(m, 'fabric', '1.20.1').status, 'ok');
+  assert.strictEqual(meta.forServer(m, 'forge').kind, 'forge');
+  const { fileProblem } = require('../src/main/modrinth');
+  assert.strictEqual(await fileProblem({ type: 'forge', version: '1.20.1', javaMajor: 17 }, f), null);
+  // Fabric 전용 jar 는 여전히 Forge 서버에서 거절
+  const fab = await jar('fabric-only.jar', { 'fabric.mod.json': '{"id":"x","depends":{"minecraft":"1.20.1"}}' });
+  assert.match(await fileProblem({ type: 'forge', version: '1.20.1', javaMajor: 17 }, fab), /Fabric 모드/);
+});
