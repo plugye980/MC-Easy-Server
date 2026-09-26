@@ -139,19 +139,19 @@ function registerIpc() {
   handle('addons:toggle', (id, fileName, enabled) => manager.setAddonEnabled(id, fileName, enabled));
   handle('addons:remove', (id, fileName) => manager.removeAddon(id, fileName));
   handle('addons:update', (id) => manager.updateAddons(id));
-  handle('addons:exportMrpack', async (id) => {
+  handle('addons:exportModsZip', async (id) => {
     const server = Servers.get(id);
     const { canceled, filePath } = await dialog.showSaveDialog(win, {
-      title: '접속용 모드팩 저장',
-      defaultPath: `${server.name.replace(/[\\/:*?"<>|]/g, '_')}.mrpack`,
-      filters: [{ name: 'Modrinth 모드팩', extensions: ['mrpack'] }],
+      title: '접속용 mods.zip 저장',
+      defaultPath: 'mods.zip',
+      filters: [{ name: 'zip', extensions: ['zip'] }],
     });
     if (canceled || !filePath) return null;
-    // 폴더에 직접 넣은 모드 중 접속하는 쪽에도 필요한 것은 모드팩 안에 파일째 넣는다
+    // 폴더에 직접 넣은 모드 중 접속하는 쪽에도 필요한 것도 넣는다
     const extra = (await manager.addons(id))
       .filter((a) => a.manual && a.enabled && a.meta && a.meta.kind === 'fabric' && a.meta.environment !== 'server')
       .map((a) => a.fileName);
-    const r = await modrinth.exportMrpack(server, paths.serverDir(id), filePath, extra);
+    const r = await modrinth.exportModsZip(server, paths.serverDir(id), filePath, extra);
     shell.showItemInFolder(filePath);
     return r;
   });
