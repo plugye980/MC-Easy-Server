@@ -6,6 +6,10 @@ const MOJANG_MANIFEST = 'https://piston-meta.mojang.com/mc/game/version_manifest
 const PAPER_V3 = 'https://fill.papermc.io/v3/projects/paper';
 const PAPER_V2 = 'https://api.papermc.io/v2/projects/paper';
 const FABRIC_META = 'https://meta.fabricmc.net/v2';
+const FORGE_PROMOS = 'https://files.minecraftforge.net/net/minecraftforge/forge/promotions_slim.json';
+const FORGE_MAVEN = 'https://maven.minecraftforge.net/net/minecraftforge/forge';
+// 설치 방식이 지금과 같은(installer --installServer) 가장 오래된 버전
+const FORGE_MIN = '1.12.2';
 
 const TTL = 10 * 60 * 1000;
 const memo = new Map();
@@ -99,9 +103,36 @@ async function listFabric() {
   });
 }
 
+/** promotions_slim.json → { "1.20.1-recommended": "47.3.0", "1.20.1-latest": "47.3.12", ... } */
+function forgePromos(promos) {
+  const out = {};
+  for (const [key, build] of Object.entries(promos || {})) {
+    const m = /^(.+)-(recommended|latest)$/.exec(key);
+    if (!m || !isStableId(m[1]) || compareVersions(m[1], FORGE_MIN) < 0) continue;
+    const e = (out[m[1]] = out[m[1]] || {});
+    e[m[2]] = build;
+  }
+  return out;
+}
+
+/** 버전별로 추천 빌드(없으면 최신)를 고른다 */
+function pickForgeBuild(promos, mc) {
+  const e = forgePromos(promos)[mc];
+  return e ? e.recommended || e.latest : null;
+}
+
+async function listForge() {
+  return cached('forge:list', async () => {
+    const data = await getJson(FORGE_PROMOS);
+    const versions = Object.keys(forgePromos(data.promos)).sort((a, b) => compareVersions(b, a));
+    return { versions, latest: versions[0] };
+  });
+}
+
 async function listVersions(type) {
   if (type === 'paper') return listPaper();
   if (type === 'fabric') return listFabric();
+  if (type === 'forge') return listForge();
   return listVanilla();
 }
 
@@ -149,6 +180,21 @@ async function fabricJar(mc) {
   };
 }
 
+/** Forge 는 서버 jar 대신 설치 프로그램을 받아 --installServer 로 설치한다 */
+async function forgeInstaller(mc) {
+  const data = await cached('forge:promos', () => getJson(FORGE_PROMOS));
+  const build = pickForgeBuild(data.promos, mc);
+  if (!build) throw new Error(`${mc} 용 Forge 없음`);
+  const full = `${mc}-${build}`;
+  return {
+    installer: true,
+    url: `${FORGE_MAVEN}/${full}/forge-${full}-installer.jar`,
+    fileName: `forge-${full}-installer.jar`,
+    loader: build,
+    build,
+  };
+}
+
 async function vanillaJar(mc) {
   const meta = await mojangVersionMeta(mc);
   if (!meta || !meta.downloads || !meta.downloads.server) {
@@ -160,10 +206,13 @@ async function vanillaJar(mc) {
 async function serverJar(type, mc) {
   if (type === 'paper') return paperBuild(mc);
   if (type === 'fabric') return fabricJar(mc);
+  if (type === 'forge') return forgeInstaller(mc);
   return vanillaJar(mc);
 }
 
 module.exports = {
+  forgePromos,
+  pickForgeBuild,
   compareVersions,
   javaForVersionFallback,
   normalizeJavaFeature,

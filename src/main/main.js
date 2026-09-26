@@ -125,9 +125,9 @@ function registerIpc() {
       const server = Servers.get(id);
       const datapack = server.type === 'vanilla';
       const r = await dialog.showOpenDialog(win, {
-        title: datapack ? '데이터팩 파일 선택' : server.type === 'fabric' ? '모드 파일 선택' : '플러그인 파일 선택',
+        title: datapack ? '데이터팩 파일 선택' : server.type === 'paper' ? '플러그인 파일 선택' : '모드 파일 선택',
         properties: ['openFile', 'multiSelections'],
-        filters: [datapack ? { name: '데이터팩', extensions: ['zip'] } : { name: server.type === 'fabric' ? 'Fabric 모드' : '플러그인', extensions: ['jar'] }],
+        filters: [datapack ? { name: '데이터팩', extensions: ['zip'] } : { name: server.type === 'paper' ? '플러그인' : server.type === 'forge' ? 'Forge 모드' : 'Fabric 모드', extensions: ['jar'] }],
       });
       if (r.canceled) return null;
       files = r.filePaths;
@@ -149,7 +149,7 @@ function registerIpc() {
     if (canceled || !filePath) return null;
     // 폴더에 직접 넣은 모드 중 접속하는 쪽에도 필요한 것도 넣는다
     const extra = (await manager.addons(id))
-      .filter((a) => a.manual && a.enabled && a.meta && a.meta.kind === 'fabric' && a.meta.environment !== 'server')
+      .filter((a) => a.manual && a.enabled && a.meta && ['fabric', 'forge'].includes(a.meta.kind) && a.meta.environment !== 'server')
       .map((a) => a.fileName);
     const r = await modrinth.exportModsZip(server, paths.serverDir(id), filePath, extra);
     shell.showItemInFolder(filePath);

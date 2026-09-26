@@ -117,6 +117,20 @@ const RULES = [
     }),
   },
   {
+    // Forge: "Mod ID: 'create', Requested by: 'createaddon', Expected range: '[0.5.1,)', Actual version: '[MISSING]'"
+    id: 'forge-missing-dep',
+    test: /Mod ID: '([\w-]+)', Requested by: '([\w-]+)', Expected range: '([^']*)', Actual version: '([^']*)'/,
+    build: (line, m) => ({
+      severity: 'error',
+      title: m[4] === '[MISSING]' ? '모드 의존성 없음' : '모드 의존성 버전 불일치',
+      message: `"${m[2]}" 모드에 "${m[1]}" ${m[3]} 필요 (현재 ${m[4] === '[MISSING]' ? '없음' : m[4]}) → 설치 또는 이 모드 끄기`,
+      actions: [
+        { id: 'install-deps', label: `${m[1]} 설치`, payload: { names: [m[1]] } },
+        { id: 'disable-mod', label: '이 모드 끄기', payload: { modId: m[2] } },
+      ],
+    }),
+  },
+  {
     id: 'fabric-incompatible',
     test: /Incompatible mods? (?:found|set)|Mod resolution failed/i,
     build: () => ({

@@ -17,6 +17,7 @@ const optimize = require('./optimize');
 const modrinth = require('./modrinth');
 const addonMeta = require('./addon-meta');
 const world = require('./world');
+const forge = require('./forge');
 const { fileHash } = require('./http');
 const backup = require('./backup');
 const reach = require('./reachability');
@@ -25,7 +26,8 @@ const { ErrorTranslator, stripColors } = require('./errors');
 
 const NAME = '([A-Za-z0-9_.]{2,17})';
 const RE = {
-  message: /^\[[^\]]*\]\s*(?:\[[^\]]*\]\s*)?:?\s*(.*)$/,
+  // 앞의 [시간] [스레드/레벨] [로거] 묶음을 모두 떼어낸다 (Forge 는 로거 이름이 하나 더 붙는다)
+  message: /^(?:\[[^\]]*\]\s*)+:?\s*(.*)$/,
   done: /Done \([\d.,]+s\)!/,
   // 서버 본체가 항상 남기는 줄 — 플러그인이 입장/퇴장 문구를 바꿔도 그대로 나온다
   login: new RegExp(`^${NAME}\\[[^\\]]*\\] logged in with entity id`),
@@ -38,10 +40,11 @@ const RE = {
   list: /There are (\d+) of a max(?: of)? (\d+) players online:?\s*(.*)$/i,
   tpsPaper: /TPS from last 1m, 5m, 15m:\s*\*?([\d.]+)/i,
   mspt: /Average time per tick:\s*([\d.]+)\s*ms/i,
+  forgeTps: /Overall\s*:\s*Mean tick time:\s*[\d.]+\s*ms\.\s*Mean TPS:\s*([\d.]+)/i,
   saved: /Saved the (?:game|world)|All dimensions are saved/i,
 };
 // 앱이 주기적으로 보내는 명령의 응답은 콘솔에 보여주지 않는다
-const POLL_NOISE = [RE.list, RE.tpsPaper, RE.mspt, /The game is running normally|Target tick rate|Percentiles:|^P50|Current Memory Usage/i];
+const POLL_NOISE = [RE.list, RE.tpsPaper, RE.mspt, /Mean tick time/i, /The game is running normally|Target tick rate|Percentiles:|^P50|Current Memory Usage/i];
 
 const addonKey = (a) => a.projectId || `file:${a.fileName}`;
 
@@ -59,6 +62,22 @@ function installAgent(dir) {
     return false;
   }
 }
+
+/** 서버 파일 준비: 보통은 server.jar 로 받고, Forge 는 설치 프로그램을 받아 --installServer 로 설치한다 */
+async function fetchServerFiles(dir, jar, javaBin, onProgress, jarName = 'server.jar') {
+  const target = jar.installer ? jar.fileName : jarName;
+  await download(jar.url, path.join(dir, target), {
+    sha256: jar.sha256,
+    sha1: jar.sha1,
+    onProgress: ({ received, total }) => onProgress({ text: jar.installer ? 'Forge 설치 프로그램 내려받는 중' : '서버 파일 내려받는 중', percent: total ? received / total : 0 }),
+  });
+  if (!jar.installer) return;
+  onProgress({ text: 'Forge 설치 중 (라이브러리 내려받기, 1~3분)', percent: 0.5 });
+  await forge.runInstaller(dir, javaBin, jar.fileName, (line) => onProgress({ text: `Forge 설치 중 — ${line.trim().slice(0, 70)}`, percent: 0.5 }));
+  forge.cleanupInstaller(dir, jar.fileName);
+}
+
+const MOD_TYPES = ['forge', 'fabric'];
 
 const DEFAULT_BACKUP = { enabled: true, intervalMin: 30, keep: 10, onStop: true };
 
@@ -135,7 +154,7 @@ class ServerManager extends EventEmitter {
    */
   async create(o, onProgress = () => {}) {
     if (!o.eula) throw new Error('EULA 동의 필요');
-    if (!['paper', 'fabric', 'vanilla'].includes(o.type)) throw new Error('서버 종류 선택 필요');
+    if (!['paper', 'forge', 'fabric', 'vanilla'].includes(o.type)) throw new Error('서버 종류 선택 필요');
     // 맵 설정은 서버 파일을 받기 전에 먼저 검사한다
     const w = o.world || { type: 'normal' };
     if (w.source !== 'import' && w.type === 'flat') world.validateFlat(w.flat);
@@ -145,15 +164,12 @@ class ServerManager extends EventEmitter {
     try {
       onProgress({ text: '필요한 Java 버전 확인 중', percent: 0 });
       const javaMajor = await versions.requiredJava(o.version);
-      await java.ensure(javaMajor, onProgress);
+      const rt = await java.ensure(javaMajor, onProgress);
 
       onProgress({ text: '서버 파일 정보 가져오는 중', percent: 0 });
       const jar = await versions.serverJar(o.type, o.version);
-      await download(jar.url, path.join(dir, 'server.jar'), {
-        sha256: jar.sha256,
-        sha1: jar.sha1,
-        onProgress: ({ received, total }) => onProgress({ text: '서버 파일 내려받는 중', percent: total ? received / total : 0 }),
-      });
+      await fetchServerFiles(dir, jar, rt.bin, onProgress);
+      if (jar.installer && !forge.launchArgs(dir, o.version, jar.build)) throw new Error('Forge 설치 후 실행 파일을 찾지 못함');
 
       // 포트: 다른 서버와 겹치지 않게
       const taken = Servers.all().map((s) => s.port);
@@ -178,7 +194,7 @@ class ServerManager extends EventEmitter {
 
       const server = {
         id,
-        name: (o.name || '').trim() || `${o.version} ${o.type === 'paper' ? '플러그인' : o.type === 'fabric' ? '모드' : '바닐라'} 서버`,
+        name: (o.name || '').trim() || `${o.version} ${o.type === 'paper' ? '플러그인' : MOD_TYPES.includes(o.type) ? '모드' : '바닐라'} 서버`,
         type: o.type,
         version: o.version,
         build: jar.build || null,
@@ -196,9 +212,10 @@ class ServerManager extends EventEmitter {
       };
       Servers.save(server);
 
-      // Fabric: 서버 최적화 모드 기본 설치
-      if (server.type === 'fabric' && server.optimize) {
-        for (const slug of optimize.FABRIC_OPTIMIZATION_MODS) {
+      // 모드 서버: 서버 최적화 모드 기본 설치 (Forge: ModernFix·FerriteCore / Fabric: Fabric API·Lithium·FerriteCore)
+      const optMods = { forge: optimize.FORGE_OPTIMIZATION_MODS, fabric: optimize.FABRIC_OPTIMIZATION_MODS }[server.type];
+      if (optMods && server.optimize) {
+        for (const slug of optMods) {
           try {
             await this.installAddon(id, slug, onProgress);
           } catch (e) {
@@ -246,7 +263,13 @@ class ServerManager extends EventEmitter {
       fs.rmSync(path.join(dir, optimize.HEAP_FILE), { force: true });
       const agent = installAgent(dir) ? optimize.agentArgs() : [];
       i.metrics.memoryMb = null; // 첫 GC 전까지는 측정 중
-      const args = [...flags, ...optimize.gcLogArgs(rt.major || server.javaMajor), ...agent, '-jar', 'server.jar', 'nogui'];
+      // Forge 는 설치 때 만들어진 인자 파일(@...args.txt) 또는 forge jar 로 켠다
+      let launch = ['-jar', 'server.jar'];
+      if (server.type === 'forge') {
+        launch = forge.launchArgs(dir, server.version, server.build);
+        if (!launch) throw new Error('Forge 실행 파일 없음 — 업데이트 버튼으로 같은 버전을 다시 설치');
+      }
+      const args = [...flags, ...optimize.gcLogArgs(rt.major || server.javaMajor), ...agent, ...launch, 'nogui'];
       this.log(id, `▶ ${path.basename(rt.bin)} ${args.join(' ')}`, 'app');
       const proc = spawn(rt.bin, args, { cwd: dir, windowsHide: true });
       i.proc = proc;
@@ -289,6 +312,9 @@ class ServerManager extends EventEmitter {
     let noise = false;
     let r;
     if ((r = RE.tpsPaper.exec(msg))) {
+      this.setTps(id, Math.min(20, parseFloat(r[1])));
+      noise = polling;
+    } else if ((r = RE.forgeTps.exec(msg))) {
       this.setTps(id, Math.min(20, parseFloat(r[1])));
       noise = polling;
     } else if ((r = RE.mspt.exec(msg))) {
@@ -375,6 +401,7 @@ class ServerManager extends EventEmitter {
     i.pollTick = (i.pollTick || 0) + 1;
     if (i.pollTick % 2 === 1) {
       if (server.type === 'paper') this.sendPoll(id, 'tps');
+      else if (server.type === 'forge' && versions.compareVersions(server.version, '1.20.3') < 0) this.sendPoll(id, 'forge tps');
       else if (versions.compareVersions(server.version, '1.20.3') >= 0) this.sendPoll(id, 'tick query');
     }
     try {
@@ -785,14 +812,14 @@ class ServerManager extends EventEmitter {
     } catch { /* 월드가 없으면 건너뜀 */ }
 
     const javaMajor = await versions.requiredJava(targetVersion);
-    await java.ensure(javaMajor, onProgress);
+    const rt = await java.ensure(javaMajor, onProgress);
     const jar = await versions.serverJar(server.type, targetVersion);
-    await download(jar.url, path.join(dir, 'server.jar.new'), {
-      sha256: jar.sha256,
-      sha1: jar.sha1,
-      onProgress: ({ received, total }) => onProgress({ text: '새 서버 파일 내려받는 중', percent: total ? received / total : 0 }),
-    });
-    fs.renameSync(path.join(dir, 'server.jar.new'), path.join(dir, 'server.jar'));
+    if (jar.installer) {
+      await fetchServerFiles(dir, jar, rt.bin, onProgress);
+    } else {
+      await fetchServerFiles(dir, jar, rt.bin, onProgress, 'server.jar.new');
+      fs.renameSync(path.join(dir, 'server.jar.new'), path.join(dir, 'server.jar'));
+    }
 
     const versionChanged = targetVersion !== server.version;
     Servers.update(id, { version: targetVersion, build: jar.build || null, loaderVersion: jar.loader || server.loaderVersion, javaMajor });

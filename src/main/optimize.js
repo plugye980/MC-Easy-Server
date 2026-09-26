@@ -162,5 +162,7 @@ function parseGcLog(text) {
 
 /** Fabric 서버에 기본으로 넣는 서버 최적화 모드 (Modrinth slug) */
 const FABRIC_OPTIMIZATION_MODS = ['fabric-api', 'lithium', 'ferrite-core'];
+/** Forge 서버에 기본으로 넣는 최적화 모드: 로딩·메모리 개선 (Modrinth slug) */
+const FORGE_OPTIMIZATION_MODS = ['modernfix', 'ferrite-core'];
 
-module.exports = { AGENT_JAR, HEAP_FILE, agentArgs, parseHeapFile, GC_LOG, gcLogArgs, parseGcLog, aikarFlags, plainFlags, propertyDefaults, applyPaperConfigs, patchYaml, FABRIC_OPTIMIZATION_MODS, PAPER_WORLD };
+module.exports = { AGENT_JAR, HEAP_FILE, agentArgs, parseHeapFile, GC_LOG, gcLogArgs, parseGcLog, aikarFlags, plainFlags, propertyDefaults, applyPaperConfigs, patchYaml, FABRIC_OPTIMIZATION_MODS, FORGE_OPTIMIZATION_MODS, PAPER_WORLD };

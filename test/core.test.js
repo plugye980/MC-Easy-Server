@@ -146,6 +146,11 @@ test('로그 파싱 정규식', () => {
   assert.strictEqual(msg('[12:34:56] [Server thread/INFO]: Steve joined the game'), 'Steve joined the game');
   assert.strictEqual(msg('[12:34:56 INFO]: Steve left the game'), 'Steve left the game');
   assert.ok(RE.join.test('Steve joined the game'));
+  // Forge: 로거 이름이 한 칸 더 붙는다
+  assert.strictEqual(msg('[12:34:56] [Server thread/INFO] [minecraft/PlayerList]: Steve[/127.0.0.1:5555] logged in with entity id 7 at (0.5, 64.0, 0.5)'), 'Steve[/127.0.0.1:5555] logged in with entity id 7 at (0.5, 64.0, 0.5)');
+  assert.strictEqual(RE.login.exec(msg('[12:34:56] [Server thread/INFO] [minecraft/PlayerList]: Steve[/127.0.0.1:5555] logged in with entity id 7 at (0.5, 64.0, 0.5)'))[1], 'Steve');
+  assert.strictEqual(msg('[12:34:56 INFO]: [Essentials] hello'), '[Essentials] hello');
+  assert.strictEqual(RE.forgeTps.exec('Overall: Mean tick time: 1.234 ms. Mean TPS: 19.87')[1], '19.87');
   // 플러그인이 입장 문구를 바꾸거나 칭호를 붙여도 접속을 바로 잡는다
   assert.strictEqual(RE.login.exec('Steve[/127.0.0.1:54321] logged in with entity id 123 at ([world]1.5, 64.0, 2.5)')[1], 'Steve');
   assert.strictEqual(RE.join.exec('[관리자] Steve joined the game')[1], 'Steve');
