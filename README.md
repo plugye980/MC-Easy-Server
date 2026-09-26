@@ -66,7 +66,7 @@ data/
    - Modrinth에 없으면 파일 안의 정보를 읽습니다. 플러그인은 `plugin.yml`·`paper-plugin.yml`, 모드는 `fabric.mod.json`입니다. 여기서 이름, 버전, 지원하는 마인크래프트 버전, 빠진 의존성을 확인하고, 서버를 업데이트하기 전에 호환성을 경고합니다
    - 서버 종류가 다른 파일(모드 서버에 넣은 플러그인 등)은 넣지 않습니다. 버전만 맞지 않는 파일은 넣되 꺼 둡니다
    - 폴더에 직접 복사한 파일도 같은 방식으로 인식합니다
-9. **의존성 자동 설치**: 필수(required) 의존성을 재귀적으로 함께 설치합니다. Fabric 서버라면 **친구용 모드팩(.mrpack)을 내보낼 수 있습니다.** 클라이언트에서 쓸 수 없는 서버 전용 모드는 빠집니다.
+9. **의존성 자동 설치**: 필수(required) 의존성을 재귀적으로 함께 설치합니다. Fabric 서버라면 **접속용 mods.zip을 내보낼 수 있습니다.** 접속하는 쪽에 필요한 모드 jar를 그대로 묶은 파일이라, 압축을 풀어 `.minecraft/mods`에 넣으면 됩니다. 클라이언트에서 쓸 수 없는 서버 전용 모드는 빠집니다.
 10. 켜기/끄기/다시 켜기, 삭제, 업데이트 버튼
 11. **접속자 목록**: 클릭으로 강퇴, OP, 화이트리스트 추가, 차단을 할 수 있습니다. 서버 본체의 로그인·연결 끊김 줄로 감지해서, 플러그인이 입장 문구를 바꿔도 바로 반영됩니다
 12. **성능 표시**: TPS·메모리·CPU 게이지와 메모리 사용량 그래프.
@@ -97,7 +97,7 @@ src/main/
   java.js            Java 감지·설치 (Adoptium)
   versions.js        Paper(Fill v3, v2 대체) / Fabric meta / Mojang 버전·jar
   optimize.js        Aikar's flags, Paper/Spigot/Bukkit 최적값
-  modrinth.js        검색·설치·의존성·호환성·mrpack
+  modrinth.js        검색·설치·의존성·호환성·mods.zip
   tunnel.js          playit.gg 에이전트
   upnp.js            UPnP(IGD) 포트 매핑
   reachability.js    Server List Ping, 외부 점검, 빈 포트 찾기

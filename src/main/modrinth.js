@@ -1,5 +1,5 @@
 'use strict';
-// Modrinth 검색 · 원클릭 설치 · 의존성 자동 설치 · 호환성 확인 · 모드팩(.mrpack) 내보내기
+// Modrinth 검색 · 원클릭 설치 · 의존성 자동 설치 · 호환성 확인 · 접속용 mods.zip 내보내기
 const fs = require('fs');
 const path = require('path');
 const yazl = require('yazl');
@@ -268,50 +268,27 @@ async function findPluginFileByName(server, serverDir, name) {
   return f || null;
 }
 
-/** 친구들이 받을 모드팩(.mrpack). 클라이언트에서 쓸 수 없는 서버 전용 모드는 뺀다. */
-async function exportMrpack(server, serverDir, outFile, extraFiles = []) {
-  const files = [];
-  const overrides = [...extraFiles];
+/**
+ * 접속용 mods.zip: 접속하는 쪽도 필요한 모드 jar 를 그대로 묶는다 (압축을 풀어 .minecraft/mods 에 넣으면 끝).
+ * 서버 전용 모드(클라이언트 미지원)는 뺀다.
+ * @param {string[]} extraFiles 폴더에 직접 넣은 모드 중 넣을 파일 이름
+ */
+async function exportModsZip(server, serverDir, outFile, extraFiles = []) {
+  const names = [];
   for (const a of server.addons || []) {
     if (!a.enabled || a.clientSide === 'unsupported') continue;
-    if (!a.url) {
-      overrides.push(a.fileName);
-      continue;
-    }
-    let { sha1, sha512 } = a;
-    const local = path.join(serverDir, 'mods', a.fileName);
-    if ((!sha1 || !sha512) && fs.existsSync(local)) {
-      sha1 = await fileHash(local, 'sha1');
-      sha512 = await fileHash(local, 'sha512');
-    }
-    files.push({
-      path: `mods/${a.fileName}`,
-      hashes: { sha1, sha512 },
-      env: { client: a.clientSide === 'optional' ? 'optional' : 'required', server: 'required' },
-      downloads: [a.url],
-      fileSize: a.size,
-    });
+    if (a.meta && a.meta.environment === 'server') continue;
+    names.push(a.fileName);
   }
-  const index = {
-    formatVersion: 1,
-    game: 'minecraft',
-    versionId: new Date().toISOString().slice(0, 10),
-    name: `${server.name} 접속용 모드팩`,
-    summary: `${server.name} 서버(${server.version}, Fabric) 접속용 모드팩`,
-    files,
-    dependencies: { minecraft: server.version, 'fabric-loader': server.loaderVersion },
-  };
+  names.push(...extraFiles);
+  const files = [...new Set(names)].filter((f) => fs.existsSync(path.join(serverDir, 'mods', f)));
   await new Promise((resolve, reject) => {
     const zip = new yazl.ZipFile();
-    zip.addBuffer(Buffer.from(JSON.stringify(index, null, 2)), 'modrinth.index.json');
-    for (const f of overrides) {
-      const local = path.join(serverDir, 'mods', f);
-      if (fs.existsSync(local)) zip.addFile(local, `overrides/mods/${f}`);
-    }
+    for (const f of files) zip.addFile(path.join(serverDir, 'mods', f), f);
     zip.end();
     zip.outputStream.pipe(fs.createWriteStream(outFile)).on('close', resolve).on('error', reject);
   });
-  return { file: outFile, count: files.length + overrides.length };
+  return { file: outFile, count: files.length, files, minecraft: server.version, loader: server.loaderVersion };
 }
 
 module.exports = {
@@ -330,5 +307,5 @@ module.exports = {
   setEnabled,
   removeFile,
   findPluginFileByName,
-  exportMrpack,
+  exportModsZip,
 };

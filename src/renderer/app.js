@@ -511,7 +511,7 @@
     const running = s.status === 'running';
     const tpsGauge = Charts.gauge({ max: 20, label: 'TPS' });
     const memGauge = Charts.gauge({ max: 100, label: '메모리' });
-    const cpuGauge = Charts.gauge({ max: 100, label: 'CPU (PC 전체)' });
+    const cpuGauge = Charts.gauge({ max: 100, label: 'CPU' });
     const tpsNote = h('span.note');
     // 5초 간격 측정 → 점 개수로 시간 눈금을 만든다
     const minutesAgo = (n) => Math.max(1, Math.round(((n - 1) * 5) / 60));
@@ -944,10 +944,10 @@
               }
             }, { small: true, icon: '⬆' }),
             s.type === 'fabric'
-              ? button('접속용 모드팩', async () => {
-                  const r = await call('addons:exportMrpack', s.id);
-                  if (r && r !== true) toast(`모드팩(.mrpack) 저장 — 모드 ${r.count}개. Modrinth 앱·Prism 런처로 열기`, { kind: 'ok', timeout: 8000 });
-                }, { small: true, kind: 'primary', icon: '⇪', title: '접속할 때 필요한 모드 목록을 .mrpack으로 내보내기' })
+              ? button('접속용 mods.zip', async () => {
+                  const r = await call('addons:exportModsZip', s.id);
+                  if (r && r !== true) toast(`mods.zip 저장 — 모드 ${r.count}개 · 압축을 풀어 .minecraft/mods 에 넣기 (Fabric Loader ${r.loader || ''} · 마인크래프트 ${r.minecraft})`, { kind: 'ok', timeout: 10000 });
+                }, { small: true, kind: 'primary', icon: '⇪', title: '접속할 때 필요한 모드 jar 파일을 mods.zip 으로 내보내기 (서버 전용 모드 제외)' })
               : null,
           ),
         ),

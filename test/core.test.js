@@ -171,22 +171,27 @@ test('Modrinth 필터는 서버 종류·버전에 맞춘다', () => {
   assert.strictEqual(modrinth.addonFolder({ type: 'vanilla', levelName: 'world' }), path.join('world', 'datapacks'));
 });
 
-test('mrpack 내보내기는 서버 전용 모드를 뺀다', async () => {
+test('접속용 mods.zip: 모드 jar 를 그대로 묶고 서버 전용 모드는 뺀다', async () => {
   const dir = fs.mkdtempSync(path.join(tmp, 'fabric-'));
+  fs.mkdirSync(path.join(dir, 'mods'));
+  for (const f of ['fabric-api.jar', 'lithium.jar', 'server-only.jar', 'disabled.jar', 'my-mod.jar', 'dropped.jar']) fs.writeFileSync(path.join(dir, 'mods', f), f);
   const server = {
     name: '테스트',
     version: '1.21.1',
     loaderVersion: '0.16.5',
     addons: [
-      { title: 'Fabric API', fileName: 'fabric-api.jar', enabled: true, clientSide: 'required', sha1: 'a', sha512: 'b', url: 'https://cdn.modrinth.com/x.jar', size: 10 },
-      { title: 'Lithium', fileName: 'lithium.jar', enabled: true, clientSide: 'optional', sha1: 'c', sha512: 'd', url: 'https://cdn.modrinth.com/y.jar', size: 10 },
-      { title: 'ServerOnly', fileName: 'server-only.jar', enabled: true, clientSide: 'unsupported', sha1: 'e', sha512: 'f', url: 'u', size: 1 },
+      { title: 'Fabric API', fileName: 'fabric-api.jar', enabled: true, clientSide: 'required' },
+      { title: 'Lithium', fileName: 'lithium.jar', enabled: true, clientSide: 'optional' },
+      { title: 'ServerOnly', fileName: 'server-only.jar', enabled: true, clientSide: 'unsupported' },
+      { title: 'Off', fileName: 'disabled.jar', enabled: false, clientSide: 'required' },
+      { title: 'Mine', fileName: 'my-mod.jar', enabled: true, source: 'file', clientSide: 'required', meta: { environment: '*' } },
     ],
   };
-  const out = path.join(dir, 'pack.mrpack');
-  const r = await modrinth.exportMrpack(server, dir, out);
-  assert.strictEqual(r.count, 2);
-  assert.ok(fs.statSync(out).size > 100);
+  const out = path.join(dir, 'mods.zip');
+  const r = await modrinth.exportModsZip(server, dir, out, ['dropped.jar']);
+  assert.deepStrictEqual(r.files.sort(), ['dropped.jar', 'fabric-api.jar', 'lithium.jar', 'my-mod.jar']);
+  const names = Object.keys(await require('../src/main/addon-meta').readEntries(out, r.files));
+  assert.deepStrictEqual(names.sort(), r.files.sort(), 'zip 안에 jar 가 폴더 없이 바로 들어 있다');
 });
 
 test('터널: rundata 에서 서버 터널 고르기', () => {
