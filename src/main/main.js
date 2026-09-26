@@ -1,0 +1,316 @@
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const { app, BrowserWindow, ipcMain, shell, dialog, clipboard, nativeTheme } = require('electron');
+
+const paths = require('./paths');
+const system = require('./system');
+const versions = require('./versions');
+const java = require('./java');
+const modrinth = require('./modrinth');
+const reach = require('./reachability');
+const upnp = require('./upnp');
+const { Servers, Settings } = require('./store');
+const { ServerManager } = require('./server-manager');
+const { Tunnel } = require('./tunnel');
+
+let win = null;
+let manager = null;
+let tunnel = null;
+let quitting = false;
+
+function send(channel, payload) {
+  if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
+}
+
+function createWindow() {
+  const settings = Settings.get();
+  win = new BrowserWindow({
+    width: 1320,
+    height: 860,
+    minWidth: 1040,
+    minHeight: 680,
+    backgroundColor: settings.theme === 'light' ? '#fbfeff' : '#212429',
+    title: 'MC Easy Server',
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https:\/\//.test(url)) shell.openExternal(url);
+    return { action: 'deny' };
+  });
+
+  // 안전한 종료: 서버가 켜져 있으면 저장 후 정지한 다음 닫는다
+  win.on('close', (e) => {
+    if (quitting || !manager.anyRunning()) return;
+    e.preventDefault();
+    safeQuit();
+  });
+}
+
+async function safeQuit() {
+  if (quitting) return;
+  quitting = true;
+  send('app:closing', { message: '서버를 저장하고 끄는 중이에요. 잠시만 기다려 주세요…' });
+  try {
+    await manager.stopAll();
+  } finally {
+    tunnel.stop();
+    app.exit(0);
+  }
+}
+
+/** ipcMain.handle 래퍼: 오류를 {error} 로 돌려 렌더러가 쉬운 말로 보여줄 수 있게 한다. */
+function handle(channel, fn) {
+  ipcMain.handle(channel, async (_e, ...args) => {
+    try {
+      return { ok: true, data: await fn(...args) };
+    } catch (e) {
+      console.error(channel, e);
+      return { ok: false, error: e.message || String(e) };
+    }
+  });
+}
+
+function progressTo(key) {
+  return (p) => send('progress', { key, ...p });
+}
+
+function registerIpc() {
+  // 시스템 · 사전 점검
+  handle('system:specs', () => system.specs());
+  handle('system:dataRoot', () => paths.dataRoot());
+  handle('versions:list', (type) => versions.listVersions(type));
+  handle('java:check', async (mc) => {
+    const major = await versions.requiredJava(mc);
+    const found = await java.detect(major);
+    return { major, found };
+  });
+  handle('java:installed', () => java.listInstalled());
+  handle('java:install', (major) => java.install(major, progressTo(`java-${major}`)));
+
+  // 서버
+  handle('servers:list', () => manager.list());
+  handle('servers:create', (opts, key) => manager.create(opts, progressTo(key || 'create')));
+  handle('server:start', (id) => manager.start(id));
+  handle('server:stop', (id) => manager.stop(id));
+  handle('server:restart', (id) => manager.restart(id));
+  handle('server:remove', (id, opts) => manager.remove(id, opts));
+  handle('server:command', (id, cmd) => manager.command(id, cmd));
+  handle('server:console', (id) => manager.consoleLines(id));
+  handle('server:history', (id) => manager.history(id));
+  handle('server:settings', (id, patch) => manager.updateSettings(id, patch));
+  handle('server:openFolder', (id) => shell.openPath(paths.serverDir(id)));
+  handle('server:checkUpdate', (id, v) => manager.checkUpdate(id, v));
+  handle('server:applyUpdate', (id, v) => manager.applyUpdate(id, v, progressTo(`update-${id}`)));
+
+  // 접속자
+  handle('players:lists', (id) => manager.playerLists(id));
+  handle('players:action', (id, action, name) => manager.playerAction(id, action, name));
+
+  // 추가 기능
+  handle('addons:search', (id, q, opts) => modrinth.search(Servers.get(id), q, opts));
+  handle('addons:list', (id) => manager.addons(id));
+  handle('addons:install', (id, projectId) => manager.installAddon(id, projectId, progressTo(`addon-${id}`)));
+  handle('addons:toggle', (id, fileName, enabled) => manager.setAddonEnabled(id, fileName, enabled));
+  handle('addons:remove', (id, fileName) => manager.removeAddon(id, fileName));
+  handle('addons:update', (id) => manager.updateAddons(id));
+  handle('addons:exportMrpack', async (id) => {
+    const server = Servers.get(id);
+    const { canceled, filePath } = await dialog.showSaveDialog(win, {
+      title: '친구용 모드팩 저장',
+      defaultPath: `${server.name.replace(/[\\/:*?"<>|]/g, '_')}.mrpack`,
+      filters: [{ name: 'Modrinth 모드팩', extensions: ['mrpack'] }],
+    });
+    if (canceled || !filePath) return null;
+    const r = await modrinth.exportMrpack(server, paths.serverDir(id), filePath);
+    shell.showItemInFolder(filePath);
+    return r;
+  });
+
+  // 백업
+  handle('backups:list', (id) => manager.listBackups(id));
+  handle('backups:create', (id) => manager.backupNow(id, 'manual'));
+  handle('backups:restore', (id, file) => manager.restoreBackup(id, file));
+  handle('backups:delete', (id, file) => manager.deleteBackup(id, file));
+
+  // 네트워크
+  handle('tunnel:state', () => tunnel.publicState());
+  handle('tunnel:start', async (id) => {
+    const server = Servers.get(id);
+    const address = await tunnel.start(server, progressTo(`tunnel-${id}`));
+    if (address) manager.updateSettings(id, { network: { mode: 'tunnel', address } });
+    return address;
+  });
+  handle('tunnel:stop', () => tunnel.stop());
+  handle('tunnel:reset', () => tunnel.reset());
+  handle('tunnel:setAddress', (id, address) => {
+    tunnel.setAddress(id, address);
+    return manager.updateSettings(id, { network: { address } });
+  });
+  handle('upnp:open', async (id) => {
+    const server = Servers.get(id);
+    const r = await upnp.openPort(server.port, `MC Easy Server - ${server.name}`);
+    manager.updateSettings(id, { network: { mode: 'upnp', address: r.address } });
+    return r;
+  });
+  handle('upnp:close', async (id) => {
+    const server = Servers.get(id);
+    await upnp.closePort(server.port);
+    return manager.updateSettings(id, { network: { mode: 'tunnel' } });
+  });
+  handle('reach:check', async (id) => {
+    const server = Servers.get(id);
+    const local = await reach.ping('127.0.0.1', server.port, 4000);
+    const address = server.network && server.network.address;
+    const external = address ? await reach.externalCheck(address) : { online: false, error: 'no-address' };
+    return { local, external, address, checkedAt: Date.now() };
+  });
+
+  // 오류 안내의 해결 버튼
+  handle('alert:action', async (id, action, payload = {}) => {
+    const server = Servers.get(id);
+    switch (action) {
+      case 'change-port': {
+        const taken = Servers.all().filter((s) => s.id !== id).map((s) => s.port);
+        const port = await reach.findFreePort(server.port + 1, taken);
+        manager.updateSettings(id, { port });
+        await manager.start(id);
+        return `포트를 ${port}번으로 바꿨어요.`;
+      }
+      case 'lower-memory': {
+        const mb = Math.min(system.specs().recommendedMb, server.memoryMb - 512);
+        manager.updateSettings(id, { memoryMb: Math.max(1024, mb) });
+        await manager.start(id);
+        return `메모리를 ${(Math.max(1024, mb) / 1024).toFixed(1)}GB로 낮췄어요.`;
+      }
+      case 'raise-memory': {
+        const max = system.specs().maxMb;
+        const mb = Math.min(max, server.memoryMb + 1024);
+        manager.updateSettings(id, { memoryMb: mb });
+        return `메모리를 ${(mb / 1024).toFixed(1)}GB로 늘렸어요. 다시 켜면 적용돼요.`;
+      }
+      case 'lower-view': {
+        const cur = manager.get(id).settings;
+        const view = Math.max(4, cur.viewDistance - 2);
+        manager.updateSettings(id, { viewDistance: view, simulationDistance: Math.min(cur.simulationDistance, view) });
+        return `시야 거리를 ${view}칸으로 줄였어요. 다시 켜면 적용돼요.`;
+      }
+      case 'fix-java': {
+        const need = payload.need ? versions.normalizeJavaFeature(payload.need) : await versions.requiredJava(server.version);
+        await java.ensure(need, progressTo(`java-${need}`));
+        Servers.update(id, { javaMajor: need });
+        await manager.start(id);
+        return `Java ${need}로 다시 켰어요.`;
+      }
+      case 'accept-eula': {
+        fs.writeFileSync(path.join(paths.serverDir(id), 'eula.txt'), 'eula=true\n');
+        await manager.start(id);
+        return 'EULA에 동의하고 다시 켰어요.';
+      }
+      case 'disable-plugin': {
+        let file = payload.file;
+        if (file) manager.setAddonEnabled(id, file, false);
+        else file = await manager.disablePluginByName(id, payload.name);
+        return `${file} 을(를) 비활성화했어요. 서버를 다시 켜면 적용돼요.`;
+      }
+      case 'disable-mod': {
+        const file = manager.disableModById(id, payload.modId);
+        return `${file} 을(를) 비활성화했어요.`;
+      }
+      case 'install-deps': {
+        const done = [];
+        for (const name of payload.names || []) {
+          const r = await manager.installByName(id, name, progressTo(`addon-${id}`));
+          done.push(...r.installed.map((a) => a.title));
+        }
+        return `${done.join(', ')} 을(를) 설치했어요. 서버를 다시 켜면 적용돼요.`;
+      }
+      default:
+        return null;
+    }
+  });
+
+  // 앱
+  handle('app:settings', () => Settings.get());
+  handle('app:setSettings', (patch) => {
+    const s = Settings.set(patch);
+    if (patch.theme) nativeTheme.themeSource = patch.theme;
+    return s;
+  });
+  handle('app:openExternal', (url) => {
+    if (/^https:\/\//.test(url)) shell.openExternal(url);
+  });
+  handle('app:copy', (text) => clipboard.writeText(String(text)));
+}
+
+function wireEvents() {
+  manager.on('server', (s) => send('server:update', s));
+  manager.on('console', (e) => send('server:console', e));
+  manager.on('metrics', (e) => send('server:metrics', e));
+  manager.on('alert', (e) => e && e.title && send('server:alert', e));
+  manager.on('notice', (e) => send('app:notice', e));
+  manager.on('backup', (e) => send('backups:changed', e));
+  manager.on('removed', (e) => send('server:removed', e));
+  manager.on('players-changed', (e) => send('players:changed', e));
+  manager.on('progress', (e) => send('progress', { key: `start-${e.serverId}`, ...e }));
+  // 터널 자동 연결: 서버가 켜지면 앱 안에서 playit 에이전트를 띄우고 주소를 받아온다
+  manager.on('ready', async ({ serverId }) => {
+    const s = Servers.get(serverId);
+    if (!s || !s.network || s.network.mode !== 'tunnel' || Settings.get().autoTunnel === false) return;
+    try {
+      const address = await tunnel.start(s);
+      if (address) manager.updateSettings(serverId, { network: { mode: 'tunnel', address } });
+    } catch (e) {
+      send('app:notice', { severity: 'error', title: '터널을 연결하지 못했어요', message: e.message });
+    }
+  });
+  tunnel.on('state', (s) => send('tunnel:state', s));
+  tunnel.on('open-url', (url) => shell.openExternal(url));
+}
+
+const single = app.requestSingleInstanceLock();
+if (!single) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (win) {
+      if (win.isMinimized()) win.restore();
+      win.focus();
+    }
+  });
+
+  app.whenReady().then(() => {
+    paths.init(app);
+    nativeTheme.themeSource = Settings.get().theme || 'dark';
+    manager = new ServerManager();
+    tunnel = new Tunnel();
+    // 저장된 터널 주소 복원
+    for (const s of Servers.all()) if (s.network && s.network.address && s.network.mode === 'tunnel') tunnel.setAddress(s.id, s.network.address);
+    registerIpc();
+    wireEvents();
+    createWindow();
+  });
+
+  app.on('before-quit', (e) => {
+    if (!quitting && manager && manager.anyRunning()) {
+      e.preventDefault();
+      safeQuit();
+    }
+  });
+
+  // 앱이 어떤 경로로 끝나든 터널 에이전트가 남지 않게 한다
+  app.on('will-quit', () => {
+    if (tunnel) tunnel.stop();
+  });
+
+  app.on('window-all-closed', () => {
+    if (!manager || !manager.anyRunning()) app.quit();
+  });
+}
