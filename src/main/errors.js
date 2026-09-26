@@ -89,7 +89,7 @@ const RULES = [
         title: '필요한 플러그인 없음',
         message: `"${pluginFromPath(m[1])}" 실행에 ${deps.join(', ')} 필요 → 함께 설치`,
         actions: [
-          { id: 'install-deps', label: '필요한 플러그인 설치', payload: { names: deps } },
+          { id: 'install-deps', label: '필요한 플러그인 설치', payload: { names: deps, kind: 'plugin' } },
           { id: 'disable-plugin', label: '이 플러그인 끄기', payload: { file: m[1] } },
         ],
       };
@@ -125,7 +125,7 @@ const RULES = [
       title: m[4] === '[MISSING]' ? '모드 의존성 없음' : '모드 의존성 버전 불일치',
       message: `"${m[2]}" 모드에 "${m[1]}" ${m[3]} 필요 (현재 ${m[4] === '[MISSING]' ? '없음' : m[4]}) → 설치 또는 이 모드 끄기`,
       actions: [
-        { id: 'install-deps', label: `${m[1]} 설치`, payload: { names: [m[1]] } },
+        { id: 'install-deps', label: `${m[1]} 설치`, payload: { names: [m[1]], kind: 'mod' } },
         { id: 'disable-mod', label: '이 모드 끄기', payload: { modId: m[2] } },
       ],
     }),
@@ -148,7 +148,7 @@ const RULES = [
       title: '모드 의존성 없음 또는 버전 불일치',
       message: `"${m[1]}" 모드에 "${m[3]}" 필요 → 설치 또는 이 모드 끄기`,
       actions: [
-        { id: 'install-deps', label: `${m[3]} 설치`, payload: { names: [m[3]] } },
+        { id: 'install-deps', label: `${m[3]} 설치`, payload: { names: [m[3]], kind: 'mod' } },
         { id: 'disable-mod', label: '이 모드 끄기', payload: { modId: m[2] } },
       ],
     }),

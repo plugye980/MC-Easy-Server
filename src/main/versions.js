@@ -129,7 +129,46 @@ async function listForge() {
   });
 }
 
+// ---------- 하이브리드 (플러그인 + 모드): Arclight Forge 판 ----------
+// GitHub 릴리스의 파일 이름: arclight-forge-<마크 버전>-<빌드>.jar
+const ARCLIGHT_RELEASES = 'https://api.github.com/repos/IzzelAliz/Arclight/releases?per_page=100';
+const ARCLIGHT_ASSET = /^arclight-forge-(\d+\.\d+(?:\.\d+)?)-([\w.+-]+)\.jar$/i;
+
+/** 릴리스 목록 → 받을 수 있는 서버 jar 들 (최신 먼저) */
+function arclightAssets(releases) {
+  const out = [];
+  for (const r of releases || []) {
+    if (r.draft) continue;
+    for (const a of r.assets || []) {
+      const m = ARCLIGHT_ASSET.exec(a.name);
+      if (!m || /sources|javadoc|-api/i.test(a.name)) continue;
+      out.push({ mc: m[1], build: m[2], url: a.browser_download_url, fileName: a.name, stable: !r.prerelease, date: r.published_at || '' });
+    }
+  }
+  return out.sort((a, b) => String(b.date).localeCompare(String(a.date)));
+}
+
+async function arclightList() {
+  return cached('arclight', async () => arclightAssets(await getJson(ARCLIGHT_RELEASES, { headers: { Accept: 'application/vnd.github+json' } })));
+}
+
+async function listHybrid() {
+  const assets = await arclightList();
+  const versions = [...new Set(assets.map((a) => a.mc))].sort((a, b) => compareVersions(b, a));
+  if (!versions.length) throw new Error('하이브리드(Arclight) 버전 목록 없음');
+  const stable = versions.find((v) => assets.some((a) => a.mc === v && a.stable));
+  return { versions, latest: stable || versions[0] };
+}
+
+async function hybridJar(mc) {
+  const assets = (await arclightList()).filter((a) => a.mc === mc);
+  const pick = assets.find((a) => a.stable) || assets[0];
+  if (!pick) throw new Error(`${mc} 용 하이브리드(Arclight) 서버 없음`);
+  return { url: pick.url, fileName: pick.fileName, build: pick.build };
+}
+
 async function listVersions(type) {
+  if (type === 'hybrid') return listHybrid();
   if (type === 'paper') return listPaper();
   if (type === 'fabric') return listFabric();
   if (type === 'forge') return listForge();
@@ -204,6 +243,7 @@ async function vanillaJar(mc) {
 }
 
 async function serverJar(type, mc) {
+  if (type === 'hybrid') return hybridJar(mc);
   if (type === 'paper') return paperBuild(mc);
   if (type === 'fabric') return fabricJar(mc);
   if (type === 'forge') return forgeInstaller(mc);
@@ -211,6 +251,7 @@ async function serverJar(type, mc) {
 }
 
 module.exports = {
+  arclightAssets,
   forgePromos,
   pickForgeBuild,
   compareVersions,

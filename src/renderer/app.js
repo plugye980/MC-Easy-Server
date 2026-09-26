@@ -11,13 +11,20 @@
     forge: { label: '모드 서버', sub: 'Forge', desc: '모드 사용. 접속하는 쪽도 같은 모드 설치 필요', addon: '모드', folder: 'mods' },
     fabric: { label: '모드 서버', sub: 'Fabric', desc: '모드 사용. 접속하는 쪽도 같은 모드 설치 필요', addon: '모드', folder: 'mods' },
     vanilla: { label: '바닐라 서버', sub: 'Vanilla', desc: '아무것도 넣지 않은 공식 서버', addon: '데이터팩', folder: 'datapacks' },
+    hybrid: { label: '하이브리드 서버', sub: 'Arclight', desc: '플러그인과 Forge 모드를 함께 사용. 접속하는 쪽도 같은 모드 설치 필요', addon: '플러그인·모드', folder: 'plugins · mods' },
   };
+  // 하이브리드 서버의 추가 기능 종류
+  const ADDON_KINDS = [
+    { value: 'plugin', label: '플러그인', sub: 'Paper·Spigot·Bukkit' },
+    { value: 'mod', label: 'Forge 모드', sub: 'Forge' },
+  ];
   const MOD_TYPES = ['forge', 'fabric'];
   // 만들기 화면의 종류 카드: 모드 서버는 하나로 두고 안에서 로더(Forge 기본 · Fabric)를 고른다
   const TYPE_CARDS = [
     { key: 'paper', label: '플러그인 서버', sub: 'Paper', desc: TYPE.paper.desc },
     { key: 'mod', label: '모드 서버', sub: 'Forge · Fabric', desc: TYPE.forge.desc },
     { key: 'vanilla', label: '바닐라 서버', sub: 'Vanilla', desc: TYPE.vanilla.desc },
+    { key: 'hybrid', label: '하이브리드 서버', sub: 'Arclight (Forge)', desc: TYPE.hybrid.desc },
   ];
   const STATUS = {
     stopped: { label: '꺼짐', dot: 'off' },
@@ -57,10 +64,11 @@
 
   const server = () => state.servers.find((s) => s.id === state.selected) || null;
 
-  /** 서버 종류 표시: 플러그인 = 네모, 모드 = 네 칸 블록, 바닐라 = 원 */
+  /** 서버 종류 표시: 플러그인 = 네모, 모드 = 네 칸 블록, 바닐라 = 원, 하이브리드 = 네모 + 블록 */
   function typeMark(type, cls = '') {
     if (type === 'forge' || type === 'mod') type = 'fabric';
-    const core = type === 'fabric' ? h('span.mark-core', null, h('i'), h('i'), h('i'), h('i')) : h('span.mark-core');
+    // 하이브리드 = 왼쪽 네모(플러그인) + 오른쪽 블록 두 칸(모드)
+    const core = type === 'fabric' ? h('span.mark-core', null, h('i'), h('i'), h('i'), h('i')) : type === 'hybrid' ? h('span.mark-core', null, h('i'), h('i'), h('i')) : h('span.mark-core');
     return h(`span.mark.mark-${TYPE[type] ? type : 'paper'}${cls}`, { 'aria-hidden': 'true' }, core);
   }
 
@@ -726,6 +734,9 @@
   // 추가 기능: 설치됨 + Modrinth 검색 · 원클릭 설치
   function viewAddons(s) {
     const t = TYPE[s.type];
+    const hybrid = s.type === 'hybrid';
+    // 하이브리드: 검색할 종류 (플러그인 / Forge 모드)
+    state.addonKind = state.addonKind || 'plugin';
     const installed = h('div.list');
     const results = h('div.list');
     const resultNote = h('span.note');
@@ -753,6 +764,7 @@
                       'div.list-title',
                       null,
                       h('span.txt', null, a.title),
+                      hybrid ? h('span.tag.txt', null, a.kind === 'mod' ? '모드' : '플러그인') : null,
                       a.dependencyOf ? h('span.tag.txt', null, '자동 설치된 의존성') : null,
                       a.projectId ? null : h('span.tag.txt', null, a.manual ? '폴더에 직접 넣음' : '파일로 추가'),
                       a.importedFromFile ? h('span.tag.txt', { title: '같은 파일이 Modrinth 에 있어 업데이트·호환성 검사 가능' }, 'Modrinth 확인됨') : null,
@@ -792,7 +804,7 @@
             button('설치', async (e) => {
               e.currentTarget.disabled = true;
               for (const name of a.missing) {
-                const r = await call('addons:installByName', s.id, name);
+                const r = await call('addons:installByName', s.id, name, a.kind || null);
                 if (r && r !== true) toast(`${r.installed.map((x) => x.title).join(', ')} 설치`, { kind: 'ok' });
               }
               refreshInstalled();
@@ -838,7 +850,8 @@
     const PAGE = 20;
     // Modrinth 는 offset + limit 이 10,000 을 넘으면 결과를 주지 않는다
     const MAX_PAGES = Math.floor(10000 / PAGE);
-    const q = { query: '', sort: 'downloads', page: 0, seq: 0 };
+    const q = { query: '', sort: 'downloads', page: 0, seq: 0, kind: hybrid ? state.addonKind : null };
+    const kindLabel = () => (hybrid ? (q.kind === 'mod' ? 'Forge 모드' : '플러그인') : t.addon);
     let timer = null;
     const pager = h('div.pager');
     const resultsCard = h('div.card');
@@ -877,14 +890,14 @@
     const doSearch = async () => {
       const seq = ++q.seq;
       resultNote.textContent = '찾는 중…';
-      const r = await call('addons:search', s.id, q.query, { limit: PAGE, offset: q.page * PAGE, index: q.sort });
+      const r = await call('addons:search', s.id, q.query, { limit: PAGE, offset: q.page * PAGE, index: q.sort, kind: q.kind });
       if (seq !== q.seq) return; // 더 최근 검색이 있으면 버린다
       if (!r || r === true) {
         resultNote.textContent = '검색 실패';
         return;
       }
       const pages = Math.min(Math.ceil(r.total / PAGE), MAX_PAGES);
-      resultNote.textContent = `${s.version} · ${t.sub} 호환만 표시 · ${fmt.num(r.total)}개${pages > 1 ? ` · ${q.page + 1}/${pages}페이지` : ''}`;
+      resultNote.textContent = `${s.version} · ${hybrid ? kindLabel() : t.sub} 호환만 표시 · ${fmt.num(r.total)}개${pages > 1 ? ` · ${q.page + 1}/${pages}페이지` : ''}`;
       renderPager(r.total);
       put(results, 
         ...(r.hits.length
@@ -900,7 +913,7 @@
                       const btn = e.currentTarget;
                       btn.disabled = true;
                       progressBox.classList.remove('hidden');
-                      const res = await call('addons:install', s.id, hit.projectId);
+                      const res = await call('addons:install', s.id, hit.projectId, q.kind);
                       progressBox.classList.add('hidden');
                       if (res && res !== true) {
                         const extra = res.installed.filter((a) => a.projectId !== hit.projectId).map((a) => a.title);
@@ -938,7 +951,21 @@
       q.page = 0;
       clearTimeout(timer);
       timer = setTimeout(doSearch, 350);
-    }, { placeholder: `${t.addon} 이름으로 찾기 (예: ${s.type === 'paper' ? 'EssentialsX, LuckPerms' : s.type === 'forge' ? 'JEI, Create' : s.type === 'fabric' ? 'Sodium, Lithium' : 'Vanilla Tweaks'})` });
+    });
+    const placeholder = () => {
+      const k = hybrid ? q.kind : null;
+      const ex = k === 'plugin' || s.type === 'paper' ? 'EssentialsX, LuckPerms' : k === 'mod' || s.type === 'forge' ? 'JEI, Create' : s.type === 'fabric' ? 'Sodium, Lithium' : 'Vanilla Tweaks';
+      searchField.placeholder = `${kindLabel()} 이름으로 찾기 (예: ${ex})`;
+    };
+    placeholder();
+    const kindSeg = hybrid
+      ? seg(ADDON_KINDS.map((k) => ({ value: k.value, label: k.label })), q.kind, (v) => {
+          q.kind = state.addonKind = v;
+          q.page = 0;
+          placeholder();
+          doSearch();
+        }, { name: '종류' })
+      : null;
 
     refreshInstalled();
     doSearch();
@@ -963,17 +990,17 @@
                 refreshInstalled();
               }
             }, { small: true, icon: '⬆' }),
-            MOD_TYPES.includes(s.type)
+            MOD_TYPES.includes(s.type) || hybrid
               ? button('접속용 mods.zip', async () => {
                   const r = await call('addons:exportModsZip', s.id);
-                  if (r && r !== true) toast(`mods.zip 저장 — 모드 ${r.count}개 · 압축을 풀어 .minecraft/mods 에 넣기 (Fabric Loader ${r.loader || ''} · 마인크래프트 ${r.minecraft})`, { kind: 'ok', timeout: 10000 });
+                  if (r && r !== true) toast(`mods.zip 저장 — 모드 ${r.count}개 · 압축을 풀어 .minecraft/mods 에 넣기 (${s.type === 'fabric' ? 'Fabric Loader' : 'Forge'} ${r.loader || ''} · 마인크래프트 ${r.minecraft})`.replace('  ', ' '), { kind: 'ok', timeout: 10000 });
                 }, { small: true, kind: 'primary', icon: '⇪', title: '접속할 때 필요한 모드 jar 파일을 mods.zip 으로 내보내기 (서버 전용 모드 제외)' })
               : null,
           ),
         ),
         h('div.stack', null, installed, dropZone),
       ),
-      append(resultsCard, [h('div.card-head', null, h('div', null, h('h2', null, 'Modrinth에서 찾기'), resultNote)), h('div.stack', null, searchField, h('div.sort-row', null, h('span.note', null, '정렬'), sortSeg), progressBox, results, pager)]),
+      append(resultsCard, [h('div.card-head', null, h('div', null, h('h2', null, 'Modrinth에서 찾기'), resultNote)), h('div.stack', null, kindSeg ? h('div.sort-row', null, h('span.note', null, '종류'), kindSeg) : null, searchField, h('div.sort-row', null, h('span.note', null, '정렬'), sortSeg), progressBox, results, pager)]),
     );
   }
 
@@ -1651,7 +1678,7 @@
             row('마인크래프트 버전', '접속할 클라이언트와 같은 버전 사용. 기본값은 최신 안정 버전', versionBox),
             nameRow,
             row('메모리', 'PC 사양 기준 추천값 표시', mem),
-            row('자동 최적화', "Aikar's flags · Paper 추천 설정 · 적정 시야 거리" + (c.type === 'fabric' ? ' · 최적화 모드(Lithium 등)' : c.type === 'forge' ? ' · 최적화 모드(ModernFix 등)' : ''), toggle(c.optimize, (v) => (c.optimize = v))),
+            row('자동 최적화', "Aikar's flags" + (c.type === 'paper' ? ' · Paper 추천 설정' : '') + ' · 적정 시야 거리' + (c.type === 'fabric' ? ' · 최적화 모드(Lithium 등)' : c.type === 'forge' ? ' · 최적화 모드(ModernFix 등)' : ''), toggle(c.optimize, (v) => (c.optimize = v))),
           ),
           h(
             'div.card',

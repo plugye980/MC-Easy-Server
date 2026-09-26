@@ -66,6 +66,14 @@ async function inspectJar(file) {
   const build = /(?:paper|purpur|folia)-\d+\.\d+(?:\.\d+)?-(\d+)\.jar$/.exec(name);
   if (entries['install_profile.json'] || /installer/.test(name)) return { kind: 'installer' };
   let flavor = null;
+  // 하이브리드(플러그인 + 모드): Mohist · Arclight · Ketting · Magma · CatServer 등. Forge 판만 지원
+  const hybrid = /^(mohist|arclight|ketting|magma|catserver|youer|banner|crucible)/.exec(name) || (/com\.mohistmc|io\.izzel\.arclight|org\.kettingpowered|org\.magmafoundation/i.exec(main) ? ['', main] : null);
+  if (hybrid) {
+    const label = { mohist: 'Mohist', arclight: 'Arclight', ketting: 'Ketting', magma: 'Magma', catserver: 'CatServer', youer: 'Youer', banner: 'Banner', crucible: 'Crucible' }[hybrid[1]] || (/mohist/i.test(main) ? 'Mohist' : /arclight/i.test(main) ? 'Arclight' : /ketting/i.test(main) ? 'Ketting' : 'Magma');
+    // Youer 는 NeoForge, Banner·arclight-fabric 은 Fabric 기반
+    const base = /youer|neoforge/.test(name) ? 'neoforge' : /banner|fabric/.test(name) ? 'fabric' : 'forge';
+    return { kind: 'server', flavor: label, hybridBase: base, version: version || (fromName ? fromName[1] : null), build: null };
+  }
   if (/paperclip/i.test(main) || /^paper|^purpur|^folia|^pufferfish/.test(name)) {
     flavor = /purpur/.test(name) ? 'Purpur' : /folia/.test(name) ? 'Folia' : /pufferfish/.test(name) ? 'Pufferfish' : 'Paper';
   } else if (/org\.bukkit\.craftbukkit/.test(main) || /^spigot|^craftbukkit|^bukkit/.test(name)) {
@@ -81,7 +89,8 @@ async function inspectJar(file) {
   return { kind: 'server', flavor, version: version || (fromName ? fromName[1] : null), build: build ? build[1] : null };
 }
 
-const TYPE_OF = { Paper: 'paper', Purpur: 'paper', Folia: 'paper', Pufferfish: 'paper', Spigot: 'paper', CraftBukkit: 'paper', Fabric: 'fabric', Forge: 'forge', Vanilla: 'vanilla' };
+const HYBRIDS = ['Mohist', 'Arclight', 'Ketting', 'Magma', 'CatServer', 'Youer', 'Banner', 'Crucible'];
+const TYPE_OF = { ...Object.fromEntries(HYBRIDS.map((h) => [h, 'hybrid'])), Paper: 'paper', Purpur: 'paper', Folia: 'paper', Pufferfish: 'paper', Spigot: 'paper', CraftBukkit: 'paper', Fabric: 'fabric', Forge: 'forge', Vanilla: 'vanilla' };
 
 /**
  * 폴더를 살펴 가져올 수 있는지와 알아낸 정보를 돌려준다.
@@ -117,10 +126,15 @@ async function detect(dir) {
     if (info && info.kind === 'server') found.push({ ...info, jarFile: j });
   }
   // Fabric 실행기는 바닐라 jar 를 옆에 두므로 Fabric 을 먼저, 그 다음 플러그인 서버, 바닐라 순
-  const order = ['Fabric', 'Paper', 'Purpur', 'Folia', 'Pufferfish', 'Spigot', 'CraftBukkit', 'Forge', 'Vanilla'];
+  const order = [...HYBRIDS, 'Fabric', 'Paper', 'Purpur', 'Folia', 'Pufferfish', 'Spigot', 'CraftBukkit', 'Forge', 'Vanilla'];
   found.sort((a, b) => order.indexOf(a.flavor) - order.indexOf(b.flavor));
   const f = found[0];
-  const bukkitJar = f && TYPE_OF[f.flavor] === 'paper';
+  // 하이브리드도 libraries 에 Forge 가 있으므로 jar 를 우선한다
+  const bukkitJar = f && (TYPE_OF[f.flavor] === 'paper' || TYPE_OF[f.flavor] === 'hybrid');
+  if (f && f.hybridBase && f.hybridBase !== 'forge') {
+    out.problems.push(`${f.flavor}(${f.hybridBase === 'neoforge' ? 'NeoForge' : 'Fabric'} 기반) 하이브리드는 아직 지원하지 않음 — Forge 기반만 가능`);
+    return out;
+  }
 
   // Forge / NeoForge: 설치 때 만든 libraries 폴더로 정확한 버전을 안다 (로더 본체 폴더만 본다)
   if (!bukkitJar) {
@@ -172,6 +186,7 @@ async function detect(dir) {
   const mem = memoryFromScripts(dir);
   const eula = /^\s*eula\s*=\s*true\s*$/im.test(readText(path.join(dir, 'eula.txt')) || '');
   if (type === 'paper' && flavor !== 'Paper') out.warnings.push(`${flavor} 서버: 업데이트 버튼을 쓰면 Paper 로 바뀜`);
+  if (type === 'hybrid' && flavor !== 'Arclight') out.warnings.push(`${flavor} 서버: 업데이트 버튼을 쓰면 Arclight 로 바뀜`);
   if (!saved) out.warnings.push('월드 없음 — 첫 실행 때 새로 생성');
 
   Object.assign(out, {
@@ -187,7 +202,7 @@ async function detect(dir) {
     memoryFrom: mem ? mem.from : null,
     eula,
     worldVersion: saved ? saved.version : null,
-    addonCount: type === 'paper' ? countJars(path.join(dir, 'plugins')) : type === 'vanilla' ? 0 : countJars(path.join(dir, 'mods')),
+    addonCount: type === 'paper' ? countJars(path.join(dir, 'plugins')) : type === 'vanilla' ? 0 : type === 'hybrid' ? countJars(path.join(dir, 'plugins')) + countJars(path.join(dir, 'mods')) : countJars(path.join(dir, 'mods')),
     name: path.basename(dir),
   });
   return out;

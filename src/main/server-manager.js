@@ -227,7 +227,7 @@ class ServerManager extends EventEmitter {
    */
   async create(o, onProgress = () => {}) {
     if (!o.eula) throw new Error('EULA 동의 필요');
-    if (!['paper', 'forge', 'fabric', 'vanilla'].includes(o.type)) throw new Error('서버 종류 선택 필요');
+    if (!['paper', 'forge', 'fabric', 'vanilla', 'hybrid'].includes(o.type)) throw new Error('서버 종류 선택 필요');
     // 맵 설정은 서버 파일을 받기 전에 먼저 검사한다
     const w = o.world || { type: 'normal' };
     if (w.source !== 'import' && w.type === 'flat') world.validateFlat(w.flat);
@@ -267,7 +267,7 @@ class ServerManager extends EventEmitter {
 
       const server = {
         id,
-        name: (o.name || '').trim() || `${o.version} ${o.type === 'paper' ? '플러그인' : MOD_TYPES.includes(o.type) ? '모드' : '바닐라'} 서버`,
+        name: (o.name || '').trim() || `${o.version} ${o.type === 'paper' ? '플러그인' : o.type === 'hybrid' ? '하이브리드' : MOD_TYPES.includes(o.type) ? '모드' : '바닐라'} 서버`,
         type: o.type,
         version: o.version,
         build: jar.build || null,
@@ -537,7 +537,7 @@ class ServerManager extends EventEmitter {
     i.pollTick = (i.pollTick || 0) + 1;
     if (i.pollTick % 2 === 1) {
       if (server.type === 'paper') this.sendPoll(id, 'tps');
-      else if (server.type === 'forge' && versions.compareVersions(server.version, '1.20.3') < 0) this.sendPoll(id, 'forge tps');
+      else if ((server.type === 'forge' || server.type === 'hybrid') && versions.compareVersions(server.version, '1.20.3') < 0) this.sendPoll(id, 'forge tps');
       else if (versions.compareVersions(server.version, '1.20.3') >= 0) this.sendPoll(id, 'tick query');
     }
     try {
@@ -873,14 +873,15 @@ class ServerManager extends EventEmitter {
    */
   worldCommand(id, cmd) {
     const server = Servers.get(id);
-    if (server.type !== 'paper') return this.settingCommand(id, cmd);
+    if (server.type !== 'paper' && server.type !== 'hybrid') return this.settingCommand(id, cmd);
     const dir = this.dir(id);
     const level = server.levelName || 'world';
+    // 하이브리드는 월드 폴더 모양이 서버마다 달라 세 차원 모두에 보낸다 (없는 차원은 무시됨)
     const dims = [
       ['minecraft:overworld', level],
       ['minecraft:the_nether', `${level}_nether`],
       ['minecraft:the_end', `${level}_the_end`],
-    ].filter(([dim, folder]) => dim === 'minecraft:overworld' || fs.existsSync(path.join(dir, folder)));
+    ].filter(([dim, folder]) => dim === 'minecraft:overworld' || server.type === 'hybrid' || fs.existsSync(path.join(dir, folder)));
     for (const [dim] of dims) this.settingCommand(id, `execute in ${dim} run ${cmd}`);
   }
 
@@ -1021,14 +1022,17 @@ class ServerManager extends EventEmitter {
   }
 
   // ---------- 추가 기능 (플러그인 / 모드 / 데이터팩) ----------
-  async installAddon(id, projectId, onProgress = () => {}) {
+  /** kind: 하이브리드 서버에서 'plugin' | 'mod' (다른 서버는 무시) */
+  async installAddon(id, projectId, onProgress = () => {}, kind = null) {
     const server = Servers.get(id);
-    const result = await modrinth.install(server, this.dir(id), projectId, onProgress);
+    const view = modrinth.asKind(server, kind);
+    const result = await modrinth.install(view, this.dir(id), projectId, onProgress);
+    if (server.type === 'hybrid') for (const a of result.installed) a.kind = view.hybridKind;
     Servers.update(id, (s) => {
       const byId = new Map((s.addons || []).map((a) => [addonKey(a), a]));
       for (const a of result.installed) {
         const old = byId.get(addonKey(a));
-        if (old && old.fileName !== a.fileName) modrinth.removeFile(s, this.dir(id), old.fileName);
+        if (old && old.fileName !== a.fileName) modrinth.removeFile(modrinth.asKind(s, old.kind), this.dir(id), old.fileName);
         byId.set(addonKey(a), old ? { ...a, dependencyOf: old.dependencyOf } : a);
       }
       return { ...s, addons: [...byId.values()] };
@@ -1037,9 +1041,11 @@ class ServerManager extends EventEmitter {
     return { ...result, needsRestart: this.inst(id).status !== 'stopped' };
   }
 
-  async installByName(id, name, onProgress) {
+  async installByName(id, name, onProgress, kind = null) {
     const server = Servers.get(id);
-    const hit = await modrinth.installByName(server, this.dir(id), name, onProgress);
+    const view = modrinth.asKind(server, kind);
+    const hit = await modrinth.installByName(view, this.dir(id), name, onProgress);
+    if (server.type === 'hybrid') for (const a of hit.installed) a.kind = view.hybridKind;
     Servers.update(id, (s) => ({
       ...s,
       addons: [...(s.addons || []).filter((a) => !hit.installed.some((x) => addonKey(x) === addonKey(a))), ...hit.installed],
@@ -1055,21 +1061,28 @@ class ServerManager extends EventEmitter {
   async addons(id) {
     const server = Servers.get(id);
     const dir = this.dir(id);
-    const folder = path.join(dir, modrinth.addonFolder(server));
-    const locate = (fileName) => {
-      const on = path.join(folder, fileName);
-      return fs.existsSync(on) ? on : fs.existsSync(`${on}.disabled`) ? `${on}.disabled` : null;
-    };
-    const list = [...(server.addons || []), ...modrinth.scanFolder(server, dir)];
-    for (const a of list) {
-      // Modrinth 로 받은 파일도 안의 이름을 읽어야 의존성 이름(예: EssentialsX → "Essentials")과 맞춰 볼 수 있다
-      if (!a.meta) {
-        const file = locate(a.fileName);
-        a.meta = file ? await addonMeta.inspect(file) : { kind: null, error: '파일 없음' };
-        if (!a.projectId && a.meta.name) a.title = a.meta.name;
-        if (a.meta.version && !a.versionNumber) a.versionNumber = a.meta.version;
+    const list = [];
+    // 하이브리드는 plugins/ 와 mods/ 를 모두 본다
+    for (const kind of modrinth.kindsOf(server)) {
+      const view = modrinth.asKind(server, kind);
+      const folder = path.join(dir, modrinth.addonFolder(view));
+      const locate = (fileName) => {
+        const on = path.join(folder, fileName);
+        return fs.existsSync(on) ? on : fs.existsSync(`${on}.disabled`) ? `${on}.disabled` : null;
+      };
+      const items = [...(view.addons || []), ...modrinth.scanFolder(view, dir)];
+      for (const a of items) {
+        if (kind) a.kind = kind;
+        // Modrinth 로 받은 파일도 안의 이름을 읽어야 의존성 이름(예: EssentialsX → "Essentials")과 맞춰 볼 수 있다
+        if (!a.meta) {
+          const file = locate(a.fileName);
+          a.meta = file ? await addonMeta.inspect(file) : { kind: null, error: '파일 없음' };
+          if (!a.projectId && a.meta.name) a.title = a.meta.name;
+          if (a.meta.version && !a.versionNumber) a.versionNumber = a.meta.version;
+        }
+        if (!a.projectId) a.compat = addonMeta.compat(a.meta, view.type, server.version);
       }
-      if (!a.projectId) a.compat = addonMeta.compat(a.meta, server.type, server.version);
+      list.push(...items);
     }
     const enabled = list.filter((a) => a.enabled);
     for (const a of list) a.missing = a.meta ? addonMeta.missingDependencies(a.meta, enabled) : [];
@@ -1082,20 +1095,31 @@ class ServerManager extends EventEmitter {
    * @returns {Promise<{added: object[], rejected: {file: string, reason: string}[]}>}
    */
   async importFiles(id, files) {
-    const server = Servers.get(id);
+    const base0 = Servers.get(id);
     const dir = this.dir(id);
-    const folder = path.join(dir, modrinth.addonFolder(server));
-    fs.mkdirSync(folder, { recursive: true });
-    const ext = server.type === 'vanilla' ? /\.zip$/i : /\.jar$/i;
+    const ext = base0.type === 'vanilla' ? /\.zip$/i : /\.jar$/i;
     const added = [];
     const rejected = [];
     for (const src of files) {
       const base = path.basename(src);
       if (!ext.test(base)) {
-        rejected.push({ file: base, reason: server.type === 'vanilla' ? '데이터팩(.zip)만 가능' : '.jar 파일만 가능' });
+        rejected.push({ file: base, reason: base0.type === 'vanilla' ? '데이터팩(.zip)만 가능' : '.jar 파일만 가능' });
         continue;
       }
       const meta = await addonMeta.inspect(src);
+      // 하이브리드: 파일 안 정보로 플러그인인지 Forge 모드인지 정해 알맞은 폴더에 넣는다
+      let kind = null;
+      if (base0.type === 'hybrid') {
+        if (meta.kind === 'plugin') kind = 'plugin';
+        else if (meta.kind === 'forge') kind = 'mod';
+        else {
+          rejected.push({ file: base, reason: meta.kind ? `${meta.kind === 'fabric' ? 'Fabric' : meta.kind === 'neoforge' ? 'NeoForge' : meta.kind} 파일 — 하이브리드(Forge) 서버에서 사용 불가` : '플러그인·Forge 모드 파일 아님' });
+          continue;
+        }
+      }
+      const server = modrinth.asKind(base0, kind);
+      const folder = path.join(dir, modrinth.addonFolder(server));
+      fs.mkdirSync(folder, { recursive: true });
       const c = addonMeta.compat(meta, server.type, server.version);
       // 종류가 다른 파일(모드 서버에 플러그인 등)은 넣지 않는다. 버전만 안 맞는 파일은 넣되 꺼 둔다
       if (c.status === 'bad' && c.wrongType) {
@@ -1134,6 +1158,7 @@ class ServerManager extends EventEmitter {
           installedAt: Date.now(),
         };
       }
+      if (kind) record.kind = kind;
       if (c.status === 'bad') {
         record.enabled = false;
         fs.renameSync(dest, `${dest}.disabled`);
@@ -1154,7 +1179,7 @@ class ServerManager extends EventEmitter {
     const list = (await this.addons(id)).filter((a) => !a.projectId && a.enabled);
     const out = { compatible: [], incompatible: [], unknown: [] };
     for (const a of list) {
-      const c = addonMeta.compat(a.meta, server.type, targetVersion);
+      const c = addonMeta.compat(a.meta, modrinth.asKind(server, a.kind).type, targetVersion);
       const item = { title: a.title, fileName: a.fileName, reason: c.reason };
       if (c.status === 'ok') out.compatible.push(item);
       else if (c.status === 'bad') out.incompatible.push(item);
@@ -1163,23 +1188,32 @@ class ServerManager extends EventEmitter {
     return out;
   }
 
+  /** 파일이 든 종류(하이브리드: plugins/ 또는 mods/)의 보기 */
+  viewForFile(server, fileName) {
+    if (server.type !== 'hybrid') return server;
+    const rec = (server.addons || []).find((a) => a.fileName === fileName);
+    if (rec) return modrinth.asKind(server, rec.kind);
+    const inMods = ['', '.disabled'].some((x) => fs.existsSync(path.join(this.dir(server.id), 'mods', fileName + x)));
+    return modrinth.asKind(server, inMods ? 'mod' : 'plugin');
+  }
+
   setAddonEnabled(id, fileName, enabled) {
     const server = Servers.get(id);
-    modrinth.setEnabled(server, this.dir(id), fileName, enabled);
+    modrinth.setEnabled(this.viewForFile(server, fileName), this.dir(id), fileName, enabled);
     Servers.update(id, (s) => ({ ...s, addons: (s.addons || []).map((a) => (a.fileName === fileName ? { ...a, enabled } : a)) }));
     this.emitServer(id);
   }
 
   removeAddon(id, fileName) {
     const server = Servers.get(id);
-    modrinth.removeFile(server, this.dir(id), fileName);
+    modrinth.removeFile(this.viewForFile(server, fileName), this.dir(id), fileName);
     Servers.update(id, (s) => ({ ...s, addons: (s.addons || []).filter((a) => a.fileName !== fileName) }));
     this.emitServer(id);
   }
 
   async disablePluginByName(id, name) {
     const server = Servers.get(id);
-    const file = await modrinth.findPluginFileByName(server, this.dir(id), name);
+    const file = await modrinth.findPluginFileByName(modrinth.asKind(server, 'plugin'), this.dir(id), name);
     if (!file) throw new Error(`"${name}" 파일 없음 — 플러그인 탭에서 직접 끄기`);
     this.setAddonEnabled(id, file, false);
     return file;
@@ -1198,9 +1232,25 @@ class ServerManager extends EventEmitter {
 
   async updateAddons(id) {
     const server = Servers.get(id);
-    const { updates } = await modrinth.checkCompatibility(server, server.version);
-    for (const u of updates) await this.installAddon(id, u.addon.projectId);
-    return updates.length;
+    let count = 0;
+    for (const kind of modrinth.kindsOf(server)) {
+      const { updates } = await modrinth.checkCompatibility(modrinth.asKind(server, kind), server.version);
+      for (const u of updates) await this.installAddon(id, u.addon.projectId, () => {}, kind);
+      count += updates.length;
+    }
+    return count;
+  }
+
+  /** 종류별 호환성 검사를 합친다 (하이브리드) */
+  async compatAll(server, gameVersion) {
+    const out = { compatible: [], incompatible: [], updates: [] };
+    for (const kind of modrinth.kindsOf(server)) {
+      const r = await modrinth.checkCompatibility(modrinth.asKind(server, kind), gameVersion);
+      out.compatible.push(...r.compatible);
+      out.incompatible.push(...r.incompatible);
+      out.updates.push(...r.updates.map((u) => ({ ...u, kind })));
+    }
+    return out;
   }
 
   // ---------- 서버 업데이트 ----------
@@ -1213,7 +1263,7 @@ class ServerManager extends EventEmitter {
     }
     let compat = { compatible: [], incompatible: [], updates: [] };
     if (target !== server.version && (server.addons || []).length) {
-      compat = await modrinth.checkCompatibility(server, target);
+      compat = await this.compatAll(server, target);
     }
     const files = target === server.version ? { compatible: [], incompatible: [], unknown: [] } : await this.fileCompat(id, target);
     return {
@@ -1256,10 +1306,10 @@ class ServerManager extends EventEmitter {
     // 추가 기능: 새 버전에 맞는 파일로 교체, 맞는 게 없으면 비활성화
     if (versionChanged && (server.addons || []).length) {
       const updated = Servers.get(id);
-      const { incompatible, updates } = await modrinth.checkCompatibility({ ...updated, version: server.version }, targetVersion);
+      const { incompatible, updates } = await this.compatAll({ ...updated, version: server.version }, targetVersion);
       for (const u of updates) {
         onProgress({ text: `${u.addon.title} 새 버전으로 교체 중`, percent: 0 });
-        try { await this.installAddon(id, u.addon.projectId); } catch { /* 다음 */ }
+        try { await this.installAddon(id, u.addon.projectId, () => {}, u.kind); } catch { /* 다음 */ }
       }
       for (const a of incompatible) this.setAddonEnabled(id, a.fileName, false);
     }

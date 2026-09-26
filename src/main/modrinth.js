@@ -16,6 +16,21 @@ function loadersFor(type) {
   return ['datapack'];
 }
 
+/**
+ * 하이브리드 서버(플러그인 + 모드)는 추가 기능이 두 종류다.
+ * 한 종류만 다루는 함수들에는 그 종류의 서버처럼 보이는 "보기"를 넘긴다 (플러그인 → Paper, 모드 → Forge).
+ */
+function asKind(server, kind) {
+  if (!server || server.type !== 'hybrid') return server;
+  const k = kind === 'mod' ? 'mod' : 'plugin';
+  return { ...server, type: k === 'mod' ? 'forge' : 'paper', hybridKind: k, addons: (server.addons || []).filter((a) => (a.kind || 'plugin') === k) };
+}
+
+/** 이 서버의 추가 기능 종류들 (하이브리드만 둘) */
+function kindsOf(server) {
+  return server && server.type === 'hybrid' ? ['plugin', 'mod'] : [null];
+}
+
 /** 추가 기능이 들어갈 폴더 (서버 폴더 기준 상대 경로) */
 function addonFolder(server) {
   if (server.type === 'paper') return 'plugins';
@@ -388,6 +403,8 @@ async function exportModsZip(server, serverDir, outFile, extraFiles = []) {
 }
 
 module.exports = {
+  asKind,
+  kindsOf,
   loadersFor,
   compatibleVersions,
   fileProblem,
