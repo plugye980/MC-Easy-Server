@@ -1,0 +1,55 @@
+{
+  "name": "mc-easy-server",
+  "productName": "MC Easy Server",
+  "version": "0.1.0",
+  "description": "친구들끼리 쓰는 마인크래프트 서버 간편 설치·관리 앱 (Paper / Fabric / Vanilla)",
+  "main": "src/main/main.js",
+  "author": "MC Easy Server",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.js",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win",
+    "dist:mac": "electron-builder --mac",
+    "dist:linux": "electron-builder --linux"
+  },
+  "build": {
+    "appId": "com.mceasyserver.app",
+    "productName": "MC Easy Server",
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "mac": {
+      "target": "dmg"
+    },
+    "linux": {
+      "target": "AppImage"
+    }
+  },
+  "dependencies": {
+    "extract-zip": "^2.0.1",
+    "pidusage": "^4.0.1",
+    "tar": "^7.5.22",
+    "yaml": "^2.9.1",
+    "yazl": "^3.3.1"
+  },
+  "devDependencies": {
+    "electron": "^44.4.5",
+    "electron-builder": "^26.15.3",
+    "pretendard": "^1.3.9"
+  }
+}
