@@ -16,6 +16,7 @@ const props = require('./properties');
 const optimize = require('./optimize');
 const modrinth = require('./modrinth');
 const addonMeta = require('./addon-meta');
+const world = require('./world');
 const { fileHash } = require('./http');
 const backup = require('./backup');
 const reach = require('./reachability');
@@ -120,6 +121,9 @@ class ServerManager extends EventEmitter {
   async create(o, onProgress = () => {}) {
     if (!o.eula) throw new Error('EULA 동의 필요');
     if (!['paper', 'fabric', 'vanilla'].includes(o.type)) throw new Error('서버 종류 선택 필요');
+    // 맵 설정은 서버 파일을 받기 전에 먼저 검사한다
+    const w = o.world || { type: 'normal' };
+    if (w.source !== 'import' && w.type === 'flat') world.validateFlat(w.flat);
     const id = crypto.randomUUID();
     const dir = this.dir(id);
     fs.mkdirSync(dir, { recursive: true });
@@ -146,9 +150,15 @@ class ServerManager extends EventEmitter {
       const values = {
         ...(o.optimize !== false ? optimize.propertyDefaults() : {}),
         ...props.toProperties({ ...s, port, viewDistance: distances.viewDistance, simulationDistance: distances.simulationDistance }),
+        ...(w.source === 'import' ? {} : world.toProperties(w, o.version)),
         'level-name': 'world',
       };
       props.write(path.join(dir, 'server.properties'), values);
+      // 다른 맵 가져오기
+      if (w.source === 'import' && w.importPath) {
+        onProgress({ text: '맵 가져오는 중', percent: 0 });
+        await world.importInto(dir, 'world', w.importPath);
+      }
       fs.writeFileSync(path.join(dir, 'eula.txt'), `# https://aka.ms/MinecraftEULA 에 동의함 (MCES)\neula=true\n`);
 
       const server = {
@@ -787,6 +797,49 @@ class ServerManager extends EventEmitter {
     } finally {
       if (running && i.proc) i.proc.stdin.write('save-on\n');
     }
+  }
+
+  // ---------- 맵(월드) ----------
+  worldInfo(id) {
+    const server = Servers.get(id);
+    const dir = this.dir(id);
+    const p = props.read(path.join(dir, 'server.properties'));
+    return { ...world.fromProperties(p), exists: !!world.worldInfoAt(path.join(dir, server.levelName)), saved: world.worldInfoAt(path.join(dir, server.levelName)) };
+  }
+
+  async inspectWorldSource(id, src) {
+    const server = id ? Servers.get(id) : null;
+    return world.inspectSource(src, server ? server.version : null);
+  }
+
+  /** 다른 맵으로 바꾸기: 지금 월드는 먼저 백업 */
+  async importWorld(id, src) {
+    if (this.inst(id).proc) throw new Error('맵을 바꾸려면 먼저 서버 끄기');
+    const server = Servers.get(id);
+    const dir = this.dir(id);
+    try {
+      await backup.create(id, dir, server.levelName, 'before-import');
+    } catch { /* 월드가 없으면 건너뜀 */ }
+    const r = await world.importInto(dir, server.levelName, src);
+    this.emit('backup', { serverId: id });
+    this.emitServer(id);
+    return r;
+  }
+
+  /** 새 설정으로 월드 다시 만들기: 지금 월드는 백업 후 지우고, 다음 실행 때 새로 생성된다 */
+  async regenerateWorld(id, w) {
+    if (this.inst(id).proc) throw new Error('월드를 다시 만들려면 먼저 서버 끄기');
+    const server = Servers.get(id);
+    if (w.type === 'flat') world.validateFlat(w.flat);
+    const dir = this.dir(id);
+    try {
+      await backup.create(id, dir, server.levelName, 'before-reset');
+    } catch { /* 월드가 없으면 건너뜀 */ }
+    world.deleteWorld(dir, server.levelName);
+    props.write(path.join(dir, 'server.properties'), world.toProperties(w, server.version));
+    this.emit('backup', { serverId: id });
+    this.emitServer(id);
+    return this.worldInfo(id);
   }
 
   listBackups(id) {

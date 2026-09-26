@@ -156,6 +156,31 @@ function registerIpc() {
     return r;
   });
 
+  // 맵(월드)
+  const pickWorld = async (kind) => {
+    const r = await dialog.showOpenDialog(win, kind === 'zip'
+      ? { title: '맵 zip 선택', properties: ['openFile'], filters: [{ name: '맵 압축 파일', extensions: ['zip'] }] }
+      : { title: '맵 폴더 선택 (level.dat 가 있는 폴더)', properties: ['openDirectory'] });
+    return r.canceled ? null : r.filePaths[0];
+  };
+  handle('world:info', (id) => manager.worldInfo(id));
+  // 만들기 화면: 맵을 고르고 정보(이름·저장 버전)를 미리 보여준다
+  handle('world:pick', async (kind, version) => {
+    const src = await pickWorld(kind);
+    if (!src) return null;
+    const info = await manager.inspectWorldSource(null, src);
+    const newer = !!(info.version && version && /^\d/.test(info.version) && versions.compareVersions(info.version, version) > 0);
+    return { path: src, ...info, newer };
+  });
+  handle('world:import', async (id, kind) => {
+    const src = await pickWorld(kind);
+    if (!src) return null;
+    const info = await manager.inspectWorldSource(id, src);
+    return { path: src, ...info };
+  });
+  handle('world:importConfirm', (id, src) => manager.importWorld(id, src));
+  handle('world:regenerate', (id, w) => manager.regenerateWorld(id, w));
+
   // 백업
   handle('backups:list', (id) => manager.listBackups(id));
   handle('backups:create', (id) => manager.backupNow(id, 'manual'));
@@ -300,6 +325,14 @@ function wireEvents() {
   });
   tunnel.on('state', (s) => send('tunnel:state', s));
   tunnel.on('open-url', (url) => shell.openExternal(url));
+  // 브라우저에서 승인하면 앱 창을 다시 앞으로 가져온다
+  tunnel.on('claimed', () => {
+    if (!win || win.isDestroyed()) return;
+    if (win.isMinimized()) win.restore();
+    win.show();
+    win.focus();
+    send('app:notice', { severity: 'info', title: 'playit 연결 승인 완료', message: '터널을 만드는 중' });
+  });
 }
 
 const single = app.requestSingleInstanceLock();

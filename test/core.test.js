@@ -16,7 +16,7 @@ const { ErrorTranslator } = require('../src/main/errors');
 const java = require('../src/main/java');
 const modrinth = require('../src/main/modrinth');
 const reach = require('../src/main/reachability');
-const { Tunnel, pickTunnel, tunnelLocalPort } = require('../src/main/tunnel');
+const { Tunnel, pickTunnel, pickTunnelByPort, tunnelLocalPort } = require('../src/main/tunnel');
 const { RE } = require('../src/main/server-manager');
 const backup = require('../src/main/backup');
 const paths = require('../src/main/paths');
@@ -183,6 +183,9 @@ test('터널: rundata 에서 서버 터널 고르기', () => {
   assert.strictEqual(t.display_address, 'x.joinmc.link');
   assert.strictEqual(tunnelLocalPort(t), 25566);
   assert.strictEqual(pickTunnel(data, 'none'), null);
+  // 웹에서 직접 만든 터널(이름이 다름)도 로컬 포트가 같으면 쓴다
+  assert.strictEqual(pickTunnelByPort(data, 25566).display_address, 'x.joinmc.link');
+  assert.strictEqual(pickTunnelByPort(data, 25570), null);
 });
 
 test('터널: playit API로 연결 → 터널 만들기 → 주소 받기 (가짜 API)', async () => {
@@ -265,4 +268,31 @@ test('월드 백업과 복원', async () => {
   // 복원 전 자동 백업이 남는다
   assert.ok(backup.list(id).some((x) => x.reason === 'before-restore'));
   await assert.rejects(backup.restore(id, dir, 'world', path.join(tmp, 'elsewhere.zip')));
+});
+
+test('터널: 에이전트가 새 버전으로 등록되기 전(AgentVersionTooOld)에는 기다렸다 다시 만든다', async () => {
+  let createCalls = 0;
+  let created = false;
+  const reply = (data, status = 'success') => ({ status: 200, json: async () => ({ status, data }) });
+  const fetchImpl = async (url) => {
+    const route = url.replace('https://api.playit.gg', '');
+    if (route === '/v1/agents/rundata') {
+      return reply({ agent_id: 'agent-2', pending: [], tunnels: created ? [{ name: 'mc-easy-retrytes', tunnel_type: 'minecraft-java', display_address: 'late.joinmc.link' }] : [] });
+    }
+    if (route === '/tunnels/create') {
+      createCalls++;
+      if (createCalls <= 2) return reply('AgentVersionTooOld', 'fail'); // 첫 시도(agent·managed 둘 다) 거절
+      created = true;
+      return reply({ id: 't-2' });
+    }
+    return reply('NotFound', 'fail');
+  };
+  const t = new Tunnel({ fetchImpl });
+  fs.mkdirSync(t.dir, { recursive: true });
+  fs.writeFileSync(t.bin, '');
+  fs.writeFileSync(t.secretFile, JSON.stringify({ secret: 'abcdef0123' }));
+  t.spawnAgent = () => {};
+  const address = await t.start({ id: 'retrytest-0000', port: 25565 });
+  assert.strictEqual(address, 'late.joinmc.link');
+  assert.strictEqual(createCalls, 3);
 });

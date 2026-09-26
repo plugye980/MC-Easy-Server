@@ -14,6 +14,14 @@
       <filter id="f-shade" x="-10%" y="-30%" width="120%" height="160%"><feGaussianBlur stdDeviation="4.5" /></filter>
       <filter id="f-shade-sm" x="-10%" y="-30%" width="120%" height="160%"><feGaussianBlur stdDeviation="4" /></filter>
       <filter id="f-soft" x="-10%" y="-30%" width="120%" height="160%"><feGaussianBlur stdDeviation="1" /></filter>
+      <!-- 색수차 — 데이터의 가장자리에만, 눈에 띄지 않게 -->
+      <filter id="chroma" x="-8%" y="-30%" width="116%" height="160%" color-interpolation-filters="sRGB">
+        <feOffset in="SourceGraphic" dx="-1.1" dy="-0.5" result="s1" />
+        <feColorMatrix in="s1" type="matrix" result="c1" values="0 0 0 0 0.35  0 0 0 0 0.74  0 0 0 0 0.95  0 0 0 0.34 0" />
+        <feOffset in="SourceGraphic" dx="1.1" dy="0.5" result="s2" />
+        <feColorMatrix in="s2" type="matrix" result="c2" values="0 0 0 0 0.84  0 0 0 0 0.64  0 0 0 0 0.28  0 0 0 0.34 0" />
+        <feMerge><feMergeNode in="c1" /><feMergeNode in="c2" /><feMergeNode in="SourceGraphic" /></feMerge>
+      </filter>
     </defs>
   </svg>
 

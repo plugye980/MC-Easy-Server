@@ -59,7 +59,7 @@ async function create(serverId, serverDir, levelName, reason = 'manual') {
 function describe(file) {
   const st = fs.statSync(file);
   const name = path.basename(file);
-  const m = /_(manual|auto|stop|before-restore|before-update)\.zip$/.exec(name);
+  const m = /_(manual|auto|stop|before-restore|before-update|before-import|before-reset)\.zip$/.exec(name);
   return { file, name, size: st.size, createdAt: st.mtimeMs, reason: m ? m[1] : 'manual' };
 }
 
