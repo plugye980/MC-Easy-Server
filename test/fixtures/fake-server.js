@@ -29,6 +29,18 @@ setTimeout(() => {
 setTimeout(() => log('Alex lost connection: Disconnected'), 600);
 const rl = readline.createInterface({ input: process.stdin });
 rl.on('line', (cmd) => {
+  // 설정 명령 대답 (바닐라 문구). MCES_FAKE_CONSOLE=reject 면 거부, silent 면 대답 없음
+  const settingCmd = /^(?:execute in \S+ run )?(gamerule|difficulty|defaultgamemode|whitelist) ?(\S*) ?(\S*)/.exec(cmd);
+  if (settingCmd && process.env.MCES_FAKE_CONSOLE === 'silent') return;
+  if (settingCmd && process.env.MCES_FAKE_CONSOLE === 'reject') return log('Unknown or incomplete command, see below for error');
+  if (settingCmd) {
+    const [, c, a, b] = settingCmd;
+    if (c === 'gamerule') log(`Gamerule ${a} is now set to: ${b}`);
+    else if (c === 'difficulty') log(`The difficulty has been set to ${a}`);
+    else if (c === 'defaultgamemode') log(`The default game mode is now ${a}`);
+    else log(`Whitelist is now turned ${a}`);
+    return;
+  }
   if (cmd === 'tps') log('TPS from last 1m, 5m, 15m: 19.5, 19.9, 20.0');
   else if (cmd === 'list') log('There are 1 of a max of 20 players online: Steve');
   else if (cmd === 'save-all flush') log('Saved the game');

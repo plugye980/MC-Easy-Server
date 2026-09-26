@@ -1193,7 +1193,7 @@
     return h(
       'div.card',
       null,
-      h('div.card-head', null, h('div', null, h('h2', null, '게임 규칙'), h('div.note', null, '월드에 저장되는 규칙(gamerule) · 켜져 있으면 바로 적용, 꺼져 있으면 다음 실행 때 적용'))),
+      h('div.card-head', null, h('div', null, h('h2', null, '게임 규칙'), h('div.note', null, `월드에 저장되는 규칙(gamerule) · 켜져 있으면 바로 적용 · 앱에서 정한 값은 켤 때마다 다시 맞춤${s.type === 'paper' ? ' · 오버월드·네더·엔드 모두 적용' : ''}`))),
       body,
     );
   }
@@ -1527,7 +1527,7 @@
       put(
         loaderRow,
         MOD_TYPES.includes(c.type)
-          ? row('모드 로더', 'Forge: 대형 콘텐츠 모드(Create 등) 대부분 지원 · Fabric: 가볍고 최신 버전 대응이 빠름', seg([{ value: 'forge', label: 'Forge (기본)' }, { value: 'fabric', label: 'Fabric' }], c.type, (v) => {
+          ? row('모드 로더', [h('div', null, 'Forge: 대형 콘텐츠 모드(Create 등) 대부분 지원'), h('div', null, 'Fabric: 가볍고 최신 버전 대응이 빠름')], seg([{ value: 'forge', label: 'Forge (기본)' }, { value: 'fabric', label: 'Fabric' }], c.type, (v) => {
               c.type = v;
               c.modLoader = v;
               syncAutoName();
