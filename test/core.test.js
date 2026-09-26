@@ -367,3 +367,13 @@ test('예전 설치판 data 폴더를 새 위치로 옮긴다', () => {
   assert.ok(fs.existsSync(path.join(from, 'servers', 'b')));
   assert.ok(!fs.existsSync(path.join(to, 'servers', 'b')));
 });
+
+test('워치독 강제 종료 안내 (틱 속도를 너무 높인 경우 등)', () => {
+  const t = new ErrorTranslator();
+  const a = t.check('[18:47:26] [Server Watchdog/ERROR]: A single server tick took 60.00 seconds (should be max 0.05)');
+  assert.strictEqual(a.kind, 'watchdog');
+  assert.match(a.message, /60초/);
+  assert.deepStrictEqual(a.actions.map((x) => x.id), ['reset-tick-rate', 'lower-view']);
+  // 같은 사고의 뒤따르는 줄은 한 번만 안내
+  assert.strictEqual(t.check('[18:47:26] [Server Watchdog/ERROR]: Considering it to be crashed, server will forcibly shutdown.'), null);
+});

@@ -109,54 +109,57 @@ async function detect(dir) {
   let build = null;
   let jarFile = null;
 
-  // Forge / NeoForge: 설치 때 만든 libraries 폴더로 정확한 버전을 안다
-  const forgeLib = path.join(dir, 'libraries', 'net', 'minecraftforge', 'forge');
-  const neoLib = path.join(dir, 'libraries', 'net', 'neoforged');
-  if (fs.existsSync(neoLib)) {
-    out.problems.push('NeoForge 서버는 아직 지원하지 않음');
-    return out;
+  // 먼저 서버 jar 를 살핀다. Paper 도 libraries 아래에 net/neoforged(플러그인 리매퍼) 같은 폴더를 두므로
+  // 플러그인 서버 jar 가 있으면 그것이 우선이다.
+  const found = [];
+  for (const j of jars) {
+    const info = await inspectJar(path.join(dir, j));
+    if (info && info.kind === 'server') found.push({ ...info, jarFile: j });
   }
-  const forgeDirs = listDir(forgeLib).filter((e) => e.isDirectory()).map((e) => e.name);
-  if (forgeDirs.length) {
-    const pick = forgeDirs.sort((a, b) => compareVersions(b.split('-')[0], a.split('-')[0]))[0];
-    const [mc, ...rest] = pick.split('-');
-    type = 'forge';
-    flavor = 'Forge';
-    version = mc;
-    build = rest.join('-') || null;
+  // Fabric 실행기는 바닐라 jar 를 옆에 두므로 Fabric 을 먼저, 그 다음 플러그인 서버, 바닐라 순
+  const order = ['Fabric', 'Paper', 'Purpur', 'Folia', 'Pufferfish', 'Spigot', 'CraftBukkit', 'Forge', 'Vanilla'];
+  found.sort((a, b) => order.indexOf(a.flavor) - order.indexOf(b.flavor));
+  const f = found[0];
+  const bukkitJar = f && TYPE_OF[f.flavor] === 'paper';
+
+  // Forge / NeoForge: 설치 때 만든 libraries 폴더로 정확한 버전을 안다 (로더 본체 폴더만 본다)
+  if (!bukkitJar) {
+    const lib = (...p) => path.join(dir, 'libraries', 'net', ...p);
+    if (fs.existsSync(lib('neoforged', 'neoforge')) || fs.existsSync(lib('neoforged', 'forge'))) {
+      out.problems.push('NeoForge 서버는 아직 지원하지 않음');
+      return out;
+    }
+    const forgeDirs = listDir(lib('minecraftforge', 'forge')).filter((e) => e.isDirectory() && /^\d+\.\d+(?:\.\d+)?-/.test(e.name)).map((e) => e.name);
+    if (forgeDirs.length) {
+      const pick = forgeDirs.sort((a, b) => compareVersions(b.split('-')[0], a.split('-')[0]))[0];
+      const [mc, ...rest] = pick.split('-');
+      type = 'forge';
+      flavor = 'Forge';
+      version = mc;
+      build = rest.join('-') || null;
+    }
   }
 
-  // 그 밖에는 서버 jar 를 살핀다
-  if (!type) {
-    const found = [];
-    for (const j of jars) {
-      const info = await inspectJar(path.join(dir, j));
-      if (info && info.kind === 'server') found.push({ ...info, jarFile: j });
-    }
-    // Fabric 실행기는 바닐라 jar 를 옆에 두므로 Fabric 을 먼저, 그 다음 플러그인 서버, 바닐라 순
-    const order = ['Fabric', 'Paper', 'Purpur', 'Folia', 'Pufferfish', 'Spigot', 'CraftBukkit', 'Forge', 'Vanilla'];
-    found.sort((a, b) => order.indexOf(a.flavor) - order.indexOf(b.flavor));
-    const f = found[0];
-    if (f) {
-      type = TYPE_OF[f.flavor];
-      flavor = f.flavor;
-      jarFile = f.jarFile;
-      build = f.build;
-      version = f.flavor === 'Fabric' ? (found.find((x) => x.flavor === 'Vanilla') || {}).version || null : f.version;
-      if (f.flavor === 'Forge') {
-        out.problems.push('예전 Forge 서버는 버전 정보를 읽을 수 없음');
-        return out;
-      }
+  if (!type && f) {
+    type = TYPE_OF[f.flavor];
+    flavor = f.flavor;
+    jarFile = f.jarFile;
+    build = f.build;
+    version = f.flavor === 'Fabric' ? (found.find((x) => x.flavor === 'Vanilla') || {}).version || null : f.version;
+    if (f.flavor === 'Forge') {
+      out.problems.push('예전 Forge 서버는 버전 정보를 읽을 수 없음');
+      return out;
     }
   }
   if (!type) {
-    // jar 는 못 알아봤지만 폴더 모양으로 짐작
-    if (names.has('plugins')) type = 'paper';
-    else if (names.has('mods') || names.has('.fabric')) type = null;
-    if (!type) {
+    // jar 를 못 알아봤지만 plugins 폴더가 있고 jar 가 하나뿐이면 Bukkit 계열로 본다
+    const only = jars.filter((j) => !/installer/i.test(j));
+    if (!names.has('plugins') || only.length !== 1) {
       out.problems.push('서버 jar 를 찾지 못함 (Paper · Spigot · Fabric · Forge · 바닐라 서버만 가능)');
       return out;
     }
+    type = 'paper';
+    jarFile = only[0];
     flavor = 'Bukkit 계열';
   }
   if (type === 'fabric' && !jarFile) jarFile = 'fabric-server-launch.jar';

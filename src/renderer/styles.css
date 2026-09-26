@@ -504,3 +504,6 @@ p { margin: 0; line-height: 1.6; }
 .import-info { padding: 6px 2px 10px; }
 .modal .row { grid-template-columns: minmax(110px, 0.6fr) minmax(0, 1.6fr); }
 .modal:has(.row) { width: min(760px, calc(100vw - 48px)); }
+
+.rules-more { margin-top: 6px; }
+.rules-more > summary { cursor: pointer; padding: 10px 2px; }

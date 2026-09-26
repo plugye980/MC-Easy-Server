@@ -12,7 +12,7 @@ if (process.env.MCES_FAKE_MODE === 'crash') {
 }
 log('Starting minecraft server version 1.21.1');
 fs.mkdirSync('world', { recursive: true });
-fs.writeFileSync('world/level.dat', 'level');
+if (!fs.existsSync('world/level.dat')) fs.writeFileSync('world/level.dat', 'level');
 setTimeout(() => log('Done (1.234s)! For help, type "help"'), 100);
 // 앱이 넘긴 -Xlog:gc 처럼 GC 로그를 남긴다 (실제 힙 사용량 측정 확인용)
 fs.mkdirSync('logs', { recursive: true });
