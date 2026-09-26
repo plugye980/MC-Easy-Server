@@ -15,6 +15,8 @@ const system = require('./system');
 const props = require('./properties');
 const optimize = require('./optimize');
 const modrinth = require('./modrinth');
+const addonMeta = require('./addon-meta');
+const { fileHash } = require('./http');
 const backup = require('./backup');
 const reach = require('./reachability');
 const { download } = require('./http');
@@ -39,6 +41,8 @@ const RE = {
 };
 // 앱이 주기적으로 보내는 명령의 응답은 콘솔에 보여주지 않는다
 const POLL_NOISE = [RE.list, RE.tpsPaper, RE.mspt, /The game is running normally|Target tick rate|Percentiles:|^P50|Current Memory Usage/i];
+
+const addonKey = (a) => a.projectId || `file:${a.fileName}`;
 
 const DEFAULT_BACKUP = { enabled: true, intervalMin: 30, keep: 10, onStop: true };
 
@@ -506,11 +510,11 @@ class ServerManager extends EventEmitter {
     const server = Servers.get(id);
     const result = await modrinth.install(server, this.dir(id), projectId, onProgress);
     Servers.update(id, (s) => {
-      const byId = new Map((s.addons || []).map((a) => [a.projectId, a]));
+      const byId = new Map((s.addons || []).map((a) => [addonKey(a), a]));
       for (const a of result.installed) {
-        const old = byId.get(a.projectId);
+        const old = byId.get(addonKey(a));
         if (old && old.fileName !== a.fileName) modrinth.removeFile(s, this.dir(id), old.fileName);
-        byId.set(a.projectId, old ? { ...a, dependencyOf: old.dependencyOf } : a);
+        byId.set(addonKey(a), old ? { ...a, dependencyOf: old.dependencyOf } : a);
       }
       return { ...s, addons: [...byId.values()] };
     });
@@ -523,15 +527,125 @@ class ServerManager extends EventEmitter {
     const hit = await modrinth.installByName(server, this.dir(id), name, onProgress);
     Servers.update(id, (s) => ({
       ...s,
-      addons: [...(s.addons || []).filter((a) => !hit.installed.some((x) => x.projectId === a.projectId)), ...hit.installed],
+      addons: [...(s.addons || []).filter((a) => !hit.installed.some((x) => addonKey(x) === addonKey(a))), ...hit.installed],
     }));
     this.emitServer(id);
     return hit;
   }
 
-  addons(id) {
+  /**
+   * 설치된 목록 + 폴더에 직접 넣은 파일.
+   * 직접 추가한 파일은 파일 안의 정보(plugin.yml / fabric.mod.json)로 호환 여부와 빠진 의존성을 붙인다.
+   */
+  async addons(id) {
     const server = Servers.get(id);
-    return [...(server.addons || []), ...modrinth.scanFolder(server, this.dir(id))];
+    const dir = this.dir(id);
+    const folder = path.join(dir, modrinth.addonFolder(server));
+    const locate = (fileName) => {
+      const on = path.join(folder, fileName);
+      return fs.existsSync(on) ? on : fs.existsSync(`${on}.disabled`) ? `${on}.disabled` : null;
+    };
+    const list = [...(server.addons || []), ...modrinth.scanFolder(server, dir)];
+    for (const a of list) {
+      if (a.projectId) continue;
+      if (!a.meta) {
+        const file = locate(a.fileName);
+        a.meta = file ? await addonMeta.inspect(file) : { kind: null, error: '파일 없음' };
+        if (a.meta.name) a.title = a.meta.name;
+        if (a.meta.version && !a.versionNumber) a.versionNumber = a.meta.version;
+      }
+      a.compat = addonMeta.compat(a.meta, server.type, server.version);
+    }
+    const enabled = list.filter((a) => a.enabled);
+    for (const a of list) a.missing = a.meta ? addonMeta.missingDependencies(a.meta, enabled) : [];
+    return list;
+  }
+
+  /**
+   * 파일에서 직접 추가 (Modrinth 에 없는 플러그인·모드).
+   * 같은 파일이 Modrinth 에 있으면 Modrinth 설치와 똑같이 기록해 업데이트·호환성 검사를 그대로 쓴다.
+   * @returns {Promise<{added: object[], rejected: {file: string, reason: string}[]}>}
+   */
+  async importFiles(id, files) {
+    const server = Servers.get(id);
+    const dir = this.dir(id);
+    const folder = path.join(dir, modrinth.addonFolder(server));
+    fs.mkdirSync(folder, { recursive: true });
+    const ext = server.type === 'vanilla' ? /\.zip$/i : /\.jar$/i;
+    const added = [];
+    const rejected = [];
+    for (const src of files) {
+      const base = path.basename(src);
+      if (!ext.test(base)) {
+        rejected.push({ file: base, reason: server.type === 'vanilla' ? '데이터팩(.zip)만 가능' : '.jar 파일만 가능' });
+        continue;
+      }
+      const meta = await addonMeta.inspect(src);
+      const c = addonMeta.compat(meta, server.type, server.version);
+      // 종류가 다른 파일(모드 서버에 플러그인 등)은 넣지 않는다. 버전만 안 맞는 파일은 넣되 꺼 둔다
+      if (c.status === 'bad' && c.wrongType) {
+        rejected.push({ file: base, reason: c.reason });
+        continue;
+      }
+      const dest = path.join(folder, base);
+      if (path.resolve(src) !== path.resolve(dest)) fs.copyFileSync(src, dest);
+      fs.rmSync(`${dest}.disabled`, { force: true });
+      const sha1 = await fileHash(dest, 'sha1');
+      const sha512 = await fileHash(dest, 'sha512');
+
+      let record = null;
+      try {
+        const version = await modrinth.lookupByHash(sha1);
+        if (version) {
+          const project = await modrinth.project(version.project_id);
+          const file = version.files.find((f) => f.hashes.sha1 === sha1) || version.files[0];
+          record = modrinth.recordFromVersion(project, version, { ...file, filename: base }, { importedFromFile: true });
+        }
+      } catch { /* 오프라인이면 파일 정보로만 */ }
+      if (!record) {
+        record = {
+          projectId: null,
+          source: 'file',
+          title: meta.name || base.replace(ext, ''),
+          versionNumber: meta.version || null,
+          fileName: base,
+          size: fs.statSync(dest).size,
+          sha1,
+          sha512,
+          meta,
+          // 모드팩 내보내기용: 서버 전용 모드는 접속하는 쪽에 필요 없다
+          clientSide: meta.environment === 'server' ? 'unsupported' : 'required',
+          enabled: true,
+          installedAt: Date.now(),
+        };
+      }
+      if (c.status === 'bad') {
+        record.enabled = false;
+        fs.renameSync(dest, `${dest}.disabled`);
+      }
+      Servers.update(id, (s) => ({
+        ...s,
+        addons: [...(s.addons || []).filter((a) => a.fileName !== base && addonKey(a) !== addonKey(record)), record],
+      }));
+      added.push({ title: record.title, fileName: base, fromModrinth: !!record.projectId, compat: c, enabled: record.enabled });
+    }
+    this.emitServer(id);
+    return { added, rejected, needsRestart: this.inst(id).status !== 'stopped' };
+  }
+
+  /** 직접 추가한 파일들이 목표 버전에서 쓸 수 있는지 (파일 정보 기준) */
+  async fileCompat(id, targetVersion) {
+    const server = Servers.get(id);
+    const list = (await this.addons(id)).filter((a) => !a.projectId && a.enabled);
+    const out = { compatible: [], incompatible: [], unknown: [] };
+    for (const a of list) {
+      const c = addonMeta.compat(a.meta, server.type, targetVersion);
+      const item = { title: a.title, fileName: a.fileName, reason: c.reason };
+      if (c.status === 'ok') out.compatible.push(item);
+      else if (c.status === 'bad') out.incompatible.push(item);
+      else out.unknown.push(item);
+    }
+    return out;
   }
 
   setAddonEnabled(id, fileName, enabled) {
@@ -557,11 +671,11 @@ class ServerManager extends EventEmitter {
   }
 
   /** Fabric 모드 id로 파일을 찾아 끈다 (jar 안의 fabric.mod.json은 열지 않고 이름으로 추정) */
-  disableModById(id, modId) {
-    const server = Servers.get(id);
+  async disableModById(id, modId) {
     const norm = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
-    const all = this.addons(id);
-    const hit = all.find((a) => norm(a.slug || '') === norm(modId) || norm(a.fileName).startsWith(norm(modId)));
+    const all = await this.addons(id);
+    // 직접 추가한 모드는 fabric.mod.json 의 id 로 정확히 찾는다
+    const hit = all.find((a) => (a.meta && a.meta.id === modId) || norm(a.slug || '') === norm(modId) || norm(a.fileName).startsWith(norm(modId)));
     if (!hit) throw new Error(`"${modId}" 모드 파일 없음 — 모드 탭에서 직접 끄기`);
     this.setAddonEnabled(id, hit.fileName, false);
     return hit.fileName;
@@ -586,15 +700,15 @@ class ServerManager extends EventEmitter {
     if (target !== server.version && (server.addons || []).length) {
       compat = await modrinth.checkCompatibility(server, target);
     }
-    const manual = modrinth.scanFolder(server, this.dir(id)).filter((a) => a.enabled);
+    const files = target === server.version ? { compatible: [], incompatible: [], unknown: [] } : await this.fileCompat(id, target);
     return {
       target,
       latest,
       available: list,
       sameVersion: target === server.version,
-      incompatible: compat.incompatible.map((a) => ({ title: a.title, fileName: a.fileName })),
-      compatible: compat.compatible.map((a) => ({ title: a.title, fileName: a.fileName })),
-      unknown: target === server.version ? [] : manual.map((a) => ({ title: a.title, fileName: a.fileName })),
+      incompatible: [...compat.incompatible.map((a) => ({ title: a.title, fileName: a.fileName })), ...files.incompatible],
+      compatible: [...compat.compatible.map((a) => ({ title: a.title, fileName: a.fileName })), ...files.compatible],
+      unknown: files.unknown,
       javaChange: (await versions.requiredJava(target)) !== server.javaMajor,
     };
   }
@@ -632,6 +746,11 @@ class ServerManager extends EventEmitter {
         try { await this.installAddon(id, u.addon.projectId); } catch { /* 다음 */ }
       }
       for (const a of incompatible) this.setAddonEnabled(id, a.fileName, false);
+    }
+    if (versionChanged) {
+      // 직접 추가한 파일: 새 버전과 맞지 않는다고 표시된 것은 꺼 둔다
+      const files = await this.fileCompat(id, targetVersion);
+      for (const a of files.incompatible) this.setAddonEnabled(id, a.fileName, false);
     }
     onProgress({ text: '업데이트 완료', percent: 1 });
     this.emitServer(id);

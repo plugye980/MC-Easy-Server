@@ -118,6 +118,23 @@ function registerIpc() {
   // 추가 기능
   handle('addons:search', (id, q, opts) => modrinth.search(Servers.get(id), q, opts));
   handle('addons:list', (id) => manager.addons(id));
+  // 파일에서 직접 추가: 경로가 없으면 파일 선택 창을 연다 (끌어다 놓기는 경로를 넘긴다)
+  handle('addons:importFiles', async (id, filePaths) => {
+    let files = Array.isArray(filePaths) ? filePaths.filter((f) => typeof f === 'string' && f) : null;
+    if (!files) {
+      const server = Servers.get(id);
+      const datapack = server.type === 'vanilla';
+      const r = await dialog.showOpenDialog(win, {
+        title: datapack ? '데이터팩 파일 선택' : server.type === 'fabric' ? '모드 파일 선택' : '플러그인 파일 선택',
+        properties: ['openFile', 'multiSelections'],
+        filters: [datapack ? { name: '데이터팩', extensions: ['zip'] } : { name: server.type === 'fabric' ? 'Fabric 모드' : '플러그인', extensions: ['jar'] }],
+      });
+      if (r.canceled) return null;
+      files = r.filePaths;
+    }
+    return manager.importFiles(id, files);
+  });
+  handle('addons:installByName', (id, name) => manager.installByName(id, name, progressTo(`addon-${id}`)));
   handle('addons:install', (id, projectId) => manager.installAddon(id, projectId, progressTo(`addon-${id}`)));
   handle('addons:toggle', (id, fileName, enabled) => manager.setAddonEnabled(id, fileName, enabled));
   handle('addons:remove', (id, fileName) => manager.removeAddon(id, fileName));
@@ -125,12 +142,16 @@ function registerIpc() {
   handle('addons:exportMrpack', async (id) => {
     const server = Servers.get(id);
     const { canceled, filePath } = await dialog.showSaveDialog(win, {
-      title: '친구용 모드팩 저장',
+      title: '접속용 모드팩 저장',
       defaultPath: `${server.name.replace(/[\\/:*?"<>|]/g, '_')}.mrpack`,
       filters: [{ name: 'Modrinth 모드팩', extensions: ['mrpack'] }],
     });
     if (canceled || !filePath) return null;
-    const r = await modrinth.exportMrpack(server, paths.serverDir(id), filePath);
+    // 폴더에 직접 넣은 모드 중 접속하는 쪽에도 필요한 것은 모드팩 안에 파일째 넣는다
+    const extra = (await manager.addons(id))
+      .filter((a) => a.manual && a.enabled && a.meta && a.meta.kind === 'fabric' && a.meta.environment !== 'server')
+      .map((a) => a.fileName);
+    const r = await modrinth.exportMrpack(server, paths.serverDir(id), filePath, extra);
     shell.showItemInFolder(filePath);
     return r;
   });
@@ -227,7 +248,7 @@ function registerIpc() {
         return `${file} 비활성화 — 재시작 시 적용`;
       }
       case 'disable-mod': {
-        const file = manager.disableModById(id, payload.modId);
+        const file = await manager.disableModById(id, payload.modId);
         return `${file} 비활성화`;
       }
       case 'install-deps': {
