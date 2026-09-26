@@ -145,6 +145,7 @@ const rulesPatch = (desired) => ({ gameRules: Object.keys(desired).length ? desi
 const SETTING_OK = /is now set to|is currently set to|difficulty has been set|difficulty did not change|default game ?mode is now|Whitelist is (?:now|already) turned|Nothing changed/i;
 const SETTING_ERROR = /Unknown or incomplete command|Incorrect argument for command|Unknown game ?rule|Unknown dimension|Invalid (?:integer|boolean)|Expected (?:integer|boolean)|does not exist/i;
 const SETTING_REPLY_TIMEOUT = 6000;
+const READY_PROBE_AFTER = Number(process.env.MCES_READY_PROBE_MS) || 40000;
 
 /** 이보다 높은 /tick rate 는 경고 (기본 20) */
 const TICK_RATE_WARN = 100;
@@ -170,6 +171,12 @@ class ServerManager extends EventEmitter {
   inst(id) {
     if (!this.instances.has(id)) this.instances.set(id, new Instance(id));
     return this.instances.get(id);
+  }
+
+  /** 명령을 받을 수 있는 상태 (켜지는 중에도 콘솔 명령은 서버가 준비된 뒤 차례로 처리된다) */
+  accepting(id) {
+    const i = this.inst(id);
+    return !!i.proc && (i.status === 'running' || i.status === 'starting');
   }
 
   dir(id) {
@@ -388,6 +395,13 @@ class ServerManager extends EventEmitter {
       });
       // exit 는 출력이 다 읽히기 전에 올 수 있으므로 close 를 쓴다
       proc.on('close', (code, signal) => finish(code, signal));
+      // 준비 확인 보조: 40초가 지나도 "켜지는 중"이면 list 로 물어본다 (대답은 서버가 준비된 뒤 온다)
+      i.readyProbeSent = false;
+      i.timers.push(setInterval(() => {
+        if (i.proc !== proc || i.status !== 'starting' || Date.now() - i.startedAt < READY_PROBE_AFTER) return;
+        i.readyProbeSent = true;
+        try { proc.stdin.write('list\n'); } catch { /* 닫힘 */ }
+      }, Math.min(10000, READY_PROBE_AFTER / 2)));
     } catch (e) {
       i.status = 'stopped';
       i.proc = null;
@@ -461,7 +475,8 @@ class ServerManager extends EventEmitter {
     }
     if (RE.saved.test(msg)) i.waiters.filter((w) => w.re.test(msg)).forEach((w) => w.resolve());
 
-    if (i.status === 'starting' && RE.done.test(msg)) this.onReady(id);
+    // "Done (…)!" 줄을 놓쳐도, 켜지는 중에 보낸 list 에 대답이 오면 준비된 것
+    if (i.status === 'starting' && (RE.done.test(msg) || (i.readyProbeSent && RE.list.test(msg)))) this.onReady(id);
 
     this.checkSettingReply(id, msg);
     if (!noise) this.log(id, line);
@@ -800,7 +815,7 @@ class ServerManager extends EventEmitter {
     if (network) next.network = { ...server.network, ...network };
     if (friendly.port !== undefined) next.port = Number(friendly.port);
 
-    const running = this.inst(id).status === 'running';
+    const running = this.accepting(id);
     const now = [];
     const restart = [];
     if (next.name !== server.name) now.push('서버 이름');
@@ -835,6 +850,7 @@ class ServerManager extends EventEmitter {
     if (!running) {
       // 꺼져 있으면 저장만으로 다음 실행에 반영되므로 전부 "적용"
       now.push(...restart.splice(0));
+      if (now.length) this.log(id, `설정 저장 (${now.join(', ')}) — 서버가 꺼져 있어 다음 실행 때 적용`, 'app');
     }
     Object.assign(next, rulesPatch(desired));
     Servers.save(next);
@@ -886,7 +902,7 @@ class ServerManager extends EventEmitter {
   gameRules(id) {
     const server = Servers.get(id);
     const saved = world.readGameRules(path.join(this.dir(id), server.levelName || 'world'));
-    const running = this.inst(id).status === 'running';
+    const running = this.accepting(id);
     if (!saved) return { available: false, running };
     const rules = { ...saved.rules };
     const desired = desiredRules(server);
@@ -910,7 +926,7 @@ class ServerManager extends EventEmitter {
     const server = Servers.get(id);
     const saved = world.readGameRules(path.join(this.dir(id), server.levelName || 'world'));
     if (!saved) throw new Error('월드가 아직 없음 — 서버를 한 번 켠 뒤 설정 가능');
-    const running = this.inst(id).status === 'running';
+    const running = this.accepting(id);
     const desired = desiredRules(server);
     const labels = [];
     const { common, other } = gamerules.describe(saved.rules);
@@ -926,6 +942,7 @@ class ServerManager extends EventEmitter {
       labels.push(labelOf.get(key) || key);
     }
     Servers.update(id, rulesPatch(desired));
+    if (!running && labels.length) this.log(id, `게임 규칙 저장 (${labels.join(', ')}) — 서버가 꺼져 있어 다음 실행 때 적용`, 'app');
     return { running, changed: labels };
   }
 
