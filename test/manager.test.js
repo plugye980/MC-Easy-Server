@@ -46,6 +46,11 @@ test('켜기 → 준비 → 접속자/TPS → 백업 → 저장 후 정지', { s
 
   await m.start(id);
   await until(() => m.get(id).status === 'running');
+  // 칭호가 붙은 입장 문구/로그인 줄로 바로 잡히고, 채팅 속 문구는 무시한다
+  const seen = new Set();
+  m.on('server', (x) => x.players.forEach((p) => seen.add(p.name)));
+  await until(() => seen.has('Alex'));
+  assert.ok(!seen.has('Bob'));
   await until(() => m.get(id).players.length === 1);
   assert.strictEqual(m.get(id).players[0].name, 'Steve');
   assert.strictEqual(m.get(id).players[0].uuid, '069a79f4-44e9-4726-a5be-fca90e38aaf5');

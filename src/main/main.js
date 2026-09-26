@@ -32,6 +32,7 @@ function createWindow() {
     minHeight: 680,
     backgroundColor: settings.theme === 'light' ? '#fbfeff' : '#212429',
     title: 'MCES',
+    icon: path.join(__dirname, '..', 'renderer', 'icon.png'),
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),

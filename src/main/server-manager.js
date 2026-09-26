@@ -24,8 +24,13 @@ const NAME = '([A-Za-z0-9_.]{2,17})';
 const RE = {
   message: /^\[[^\]]*\]\s*(?:\[[^\]]*\]\s*)?:?\s*(.*)$/,
   done: /Done \([\d.,]+s\)!/,
-  join: new RegExp(`^${NAME} joined the game`),
-  leave: new RegExp(`^${NAME} left the game`),
+  // 서버 본체가 항상 남기는 줄 — 플러그인이 입장/퇴장 문구를 바꿔도 그대로 나온다
+  login: new RegExp(`^${NAME}\\[[^\\]]*\\] logged in with entity id`),
+  lost: new RegExp(`^${NAME} lost connection`),
+  // 입장/퇴장 문구: 칭호 등이 앞에 붙어도("[관리자] Steve joined the game") 잡는다
+  join: new RegExp(`(?:^|[\\s\\]>])${NAME} joined the game`),
+  leave: new RegExp(`(?:^|[\\s\\]>])${NAME} left the game`),
+  chat: /^(?:\[Not Secure\]\s*)?<[^>]+>/,
   uuid: new RegExp(`UUID of player ${NAME} is ([0-9a-f-]{36})`, 'i'),
   list: /There are (\d+) of a max(?: of)? (\d+) players online:?\s*(.*)$/i,
   tpsPaper: /TPS from last 1m, 5m, 15m:\s*\*?([\d.]+)/i,
@@ -270,13 +275,16 @@ class ServerManager extends EventEmitter {
       i.pendingUuid = { ...(i.pendingUuid || {}), [r[1]]: r[2] };
       p.uuid = r[2];
     }
-    if ((r = RE.join.exec(msg))) {
-      const uuid = i.pendingUuid && i.pendingUuid[r[1]];
-      i.players.set(r[1], { name: r[1], uuid: uuid || null, joinedAt: Date.now() });
-      this.emitServer(id);
-    } else if ((r = RE.leave.exec(msg))) {
-      i.players.delete(r[1]);
-      this.emitServer(id);
+    // 채팅("<Steve> Bob joined the game")은 입장/퇴장으로 보지 않는다
+    const chat = RE.chat.test(msg);
+    if (!chat && (r = RE.login.exec(msg) || RE.join.exec(msg))) {
+      if (!i.players.has(r[1])) {
+        const uuid = i.pendingUuid && i.pendingUuid[r[1]];
+        i.players.set(r[1], { name: r[1], uuid: uuid || null, joinedAt: Date.now() });
+        this.emitServer(id);
+      }
+    } else if (!chat && (r = RE.lost.exec(msg) || RE.leave.exec(msg))) {
+      if (i.players.delete(r[1])) this.emitServer(id);
     }
     if (RE.saved.test(msg)) i.waiters.filter((w) => w.re.test(msg)).forEach((w) => w.resolve());
 
@@ -313,7 +321,7 @@ class ServerManager extends EventEmitter {
     // 그래프가 바로 선을 그릴 수 있게 두 번째 측정을 앞당긴다
     i.timers.push(setTimeout(() => this.poll(id), 1500));
     i.timers.push(setInterval(() => this.poll(id), 5000));
-    i.timers.push(setInterval(() => this.sendPoll(id, 'list'), 30000));
+    i.timers.push(setInterval(() => this.sendPoll(id, 'list'), 10000));
     this.scheduleBackup(id);
   }
 
