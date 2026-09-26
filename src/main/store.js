@@ -51,7 +51,7 @@ const Servers = {
 
 const Settings = {
   get() {
-    return { theme: 'dark', ...readJson('settings.json', {}) };
+    return { theme: 'light', ...readJson('settings.json', {}) };
   },
   set(patch) {
     const next = { ...this.get(), ...patch };

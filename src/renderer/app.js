@@ -42,7 +42,7 @@
     selected: null, // 서버 id 또는 'new'
     tab: 'overview',
     specs: null,
-    settings: { theme: 'dark' },
+    settings: { theme: 'light' },
     tunnel: { status: 'idle', addresses: {} },
     javaInstalled: [],
     alerts: {}, // serverId -> [alert]
@@ -77,7 +77,7 @@
 
   // ---------- 시작 ----------
   async function init() {
-    state.settings = (await call('app:settings')) || state.settings;
+    state.settings = { ...state.settings, ...((await call('app:settings')) || {}) };
     applyTheme(state.settings.theme);
     const [specs, servers, tunnel, javaInstalled] = await Promise.all([call('system:specs'), call('servers:list'), call('tunnel:state'), call('java:installed')]);
     state.specs = specs;
@@ -91,7 +91,7 @@
   }
 
   function applyTheme(theme) {
-    document.documentElement.dataset.theme = theme === 'light' ? 'light' : 'dark';
+    document.documentElement.dataset.theme = theme === 'dark' ? 'dark' : 'light';
   }
 
   function subscribe() {
@@ -220,8 +220,8 @@
           : null,
         seg(
           [
-            { value: 'dark', label: '어둡게' },
             { value: 'light', label: '밝게' },
+            { value: 'dark', label: '어둡게' },
           ],
           state.settings.theme,
           async (theme) => {
