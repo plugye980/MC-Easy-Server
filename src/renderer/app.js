@@ -8,7 +8,7 @@
 
   const TYPE = {
     paper: { label: '플러그인 서버', sub: 'Paper', desc: '플러그인으로 기능 추가. 가장 가볍고 빠름', addon: '플러그인', folder: 'plugins' },
-    fabric: { label: '모드 서버', sub: 'Fabric', desc: '모드 사용. 친구들도 같은 모드 설치 필요', addon: '모드', folder: 'mods' },
+    fabric: { label: '모드 서버', sub: 'Fabric', desc: '모드 사용. 접속하는 쪽도 같은 모드 설치 필요', addon: '모드', folder: 'mods' },
     vanilla: { label: '바닐라 서버', sub: 'Vanilla', desc: '아무것도 넣지 않은 공식 서버', addon: '데이터팩', folder: 'datapacks' },
   };
   const STATUS = {
@@ -48,6 +48,19 @@
   let live = {}; // 현재 화면의 갱신 가능한 요소들
 
   const server = () => state.servers.find((s) => s.id === state.selected) || null;
+
+  /** 서버 종류 표시: 플러그인 = 네모, 모드 = 네 칸 블록, 바닐라 = 원 */
+  function typeMark(type, cls = '') {
+    const core = type === 'fabric' ? h('span.mark-core', null, h('i'), h('i'), h('i'), h('i')) : h('span.mark-core');
+    return h(`span.mark.mark-${TYPE[type] ? type : 'paper'}${cls}`, { 'aria-hidden': 'true' }, core);
+  }
+
+  /** 왼쪽 위 표시는 지금 보고 있는 서버(또는 만들고 있는 서버)의 종류를 따른다 */
+  function brandType() {
+    if (state.selected === 'new') return (state.create && state.create.type) || 'paper';
+    const s = server();
+    return s ? s.type : 'paper';
+  }
 
   // ---------- 시작 ----------
   async function init() {
@@ -167,11 +180,11 @@
     );
     const side = $('#side');
     put(side, 
-      h('div.brand', null, h('div.brand-mark'), h('div', null, h('h1', null, 'MCES'), h('span.note', null, '친구들과 여는 마인크래프트 서버'))),
+      h('div.brand', null, typeMark(brandType(), '.brand-mark'), h('div', null, h('h1', null, 'MCES'), h('span.note', null, '마인크래프트 서버 관리'))),
       h(
         'div.side-section',
         { style: { flex: '1', minHeight: 0 } },
-        h('div.side-head', null, h('span.label', null, '내 서버'), button(null, () => selectServer('new'), { icon: '+', small: true, kind: 'ghost', title: '새 서버 만들기' })),
+        h('div.side-head', null, h('span.label', null, '내 서버')),
         list,
         button('새 서버 만들기', () => selectServer('new'), { icon: '+', kind: state.selected === 'new' ? 'primary' : undefined, class: 'btn-block' }),
       ),
@@ -365,7 +378,7 @@
       main = h(
         'div.address-main',
         null,
-        h('span.note', { style: { whiteSpace: 'nowrap' } }, s.network && s.network.mode === 'upnp' ? '공유기 주소' : '친구 접속 주소'),
+        h('span.note', { style: { whiteSpace: 'nowrap' } }, s.network && s.network.mode === 'upnp' ? '공유기 주소' : '접속 주소'),
         h('span.address-text.num.sky', null, address),
         button('복사', async () => {
           if (await call('app:copy', address)) toast('주소 복사됨', { kind: 'ok' });
@@ -380,7 +393,7 @@
         'div.address-main',
         null,
         dot(tunnelBusy ? 'busy' : 'off'),
-        h('div', { style: { minWidth: 0, flex: 1 } }, h('div.txt', null, tunnelBusy ? t.message || '터널 연결 중' : '친구 접속 주소 없음'), tunnelBusy ? bar : h('div.note', null, t.status === 'error' ? t.message : '터널 연결 시 포트포워딩 없이 친구 접속 가능')),
+        h('div', { style: { minWidth: 0, flex: 1 } }, h('div.txt', null, tunnelBusy ? t.message || '터널 연결 중' : '접속 주소 없음'), tunnelBusy ? bar : h('div.note', null, t.status === 'error' ? t.message : '터널 연결 시 포트포워딩 없이 외부 접속 가능')),
         button('터널 연결', () => startTunnel(s.id), { small: true, kind: 'primary', disabled: tunnelBusy }),
         button(null, () => editAddress(s), { small: true, kind: 'ghost', icon: '✎', title: '주소 직접 입력' }),
       );
@@ -666,17 +679,17 @@
 
       let name = '';
       const nameField = input('', (v) => (name = v), { placeholder: '플레이어 이름', disabled: !running });
-      side.append(
+      append(side, [
         h(
           'div.card',
           null,
-          h('div.card-head', null, h('div', null, h('h2', null, '이름으로 관리'), h('div.note', null, running ? '접속하지 않은 친구도 미리 추가' : '서버 실행 중에만 가능'))),
+          h('div.card-head', null, h('div', null, h('h2', null, '이름으로 관리'), h('div.note', null, running ? '접속하지 않은 플레이어도 미리 추가' : '서버 실행 중에만 가능'))),
           h('div.stack', null, nameField, h('div.inline', null, button('화이트리스트 추가', () => name && playerAction(s, 'whitelist-add', name.trim()), { small: true, disabled: !running }), button('OP 주기', () => name && playerAction(s, 'op', name.trim()), { small: true, disabled: !running }), button('차단', () => name && playerAction(s, 'ban', name.trim()), { small: true, kind: 'danger', disabled: !running }))),
         ),
         nameList(s, '화이트리스트', s.settings.whitelist ? '켜짐 — 목록에 있는 사람만 접속' : '꺼짐 — 설정 탭에서 변경', lists.whitelist, 'whitelist-remove', '빼기', running),
         nameList(s, '관리자 (OP)', '명령어를 쓸 수 있는 사람', lists.ops, 'deop', 'OP 해제', running),
         lists.banned.length ? nameList(s, '차단됨', '', lists.banned, 'pardon', '차단 해제', running) : null,
-      );
+      ]);
     });
     return wrap;
   }
@@ -718,8 +731,16 @@
                   h(
                     'div',
                     { style: { minWidth: 0 } },
-                    h('div.list-title', null, h('span.txt', null, a.title), a.dependencyOf ? h('span.tag.txt', null, '자동 설치된 의존성') : null, a.manual ? h('span.tag.txt', null, '직접 넣은 파일') : null),
+                    h(
+                      'div.list-title',
+                      null,
+                      h('span.txt', null, a.title),
+                      a.dependencyOf ? h('span.tag.txt', null, '자동 설치된 의존성') : null,
+                      a.projectId ? null : h('span.tag.txt', null, a.manual ? '폴더에 직접 넣음' : '파일로 추가'),
+                      a.importedFromFile ? h('span.tag.txt', { title: '같은 파일이 Modrinth 에 있어 업데이트·호환성 검사 가능' }, 'Modrinth 확인됨') : null,
+                    ),
                     h('div.note', null, a.versionNumber ? `${a.versionNumber} · ${a.fileName}` : a.fileName),
+                    compatLine(a),
                   ),
                   h(
                     'div.list-actions',
@@ -736,9 +757,65 @@
                   ),
                 ),
               )
-          : [h('span.empty', null, `설치된 ${t.addon} 없음 — 오른쪽에서 검색해 설치`)]),
+          : [h('span.empty', null, `설치된 ${t.addon} 없음 — 오른쪽에서 검색하거나 파일로 추가`)]),
       );
     };
+
+    /** 직접 추가한 파일의 호환 여부와 빠진 의존성 */
+    const compatLine = (a) => {
+      const parts = [];
+      if (a.compat && a.compat.status === 'bad') parts.push(h('span.compat.bad', null, `호환 안 됨 · ${a.compat.reason}`));
+      else if (a.compat && a.compat.status === 'unknown') parts.push(h('span.compat.dim', null, `호환 확인 불가 · ${a.compat.reason}`));
+      else if (a.compat && a.compat.status === 'ok') parts.push(h('span.compat.ok', null, `${s.version} 호환`));
+      if (a.enabled && a.missing && a.missing.length) {
+        parts.push(h('span.compat.brass', null, `필요: ${a.missing.join(', ')}`));
+        if (s.type !== 'vanilla') {
+          parts.push(
+            button('설치', async (e) => {
+              e.currentTarget.disabled = true;
+              for (const name of a.missing) {
+                const r = await call('addons:installByName', s.id, name);
+                if (r && r !== true) toast(`${r.installed.map((x) => x.title).join(', ')} 설치`, { kind: 'ok' });
+              }
+              refreshInstalled();
+            }, { small: true, title: 'Modrinth 에서 찾아 설치' }),
+          );
+        }
+      }
+      return parts.length ? h('div.compat-line', null, parts) : null;
+    };
+
+    /** 파일에서 추가 (선택 창 또는 끌어다 놓기) */
+    const importFiles = async (paths) => {
+      const r = await call('addons:importFiles', s.id, paths);
+      if (!r || r === true) return;
+      for (const a of r.added) {
+        const how = a.fromModrinth ? ' (Modrinth 파일로 확인)' : '';
+        if (!a.enabled) toast(`${a.title} 추가 — 버전 불일치로 꺼 둠: ${a.compat.reason}`, { kind: 'error', timeout: 8000 });
+        else toast(`${a.title} 추가${how}${r.needsRestart ? ' — 재시작 시 적용' : ''}`, { kind: 'ok', timeout: 6000 });
+      }
+      for (const x of r.rejected) toast(`${x.file} 추가 불가 — ${x.reason}`, { kind: 'error', timeout: 8000 });
+      refreshInstalled();
+    };
+    const fileExt = s.type === 'vanilla' ? '.zip' : '.jar';
+    const dropZone = h(
+      'div.drop-zone',
+      {
+        ondragover: (e) => {
+          e.preventDefault();
+          dropZone.classList.add('over');
+        },
+        ondragleave: () => dropZone.classList.remove('over'),
+        ondrop: (e) => {
+          e.preventDefault();
+          dropZone.classList.remove('over');
+          const paths = [...e.dataTransfer.files].map((f) => window.mc.pathForFile && window.mc.pathForFile(f)).filter(Boolean);
+          if (paths.length) importFiles(paths);
+        },
+      },
+      h('span.note', null, `${fileExt} 파일을 여기에 끌어다 놓기 · Modrinth 에 없는 ${t.addon} 추가`),
+      button('파일에서 추가', () => importFiles(null), { small: true, icon: '＋' }),
+    );
 
     const PAGE = 20;
     // Modrinth 는 offset + limit 이 10,000 을 넘으면 결과를 주지 않는다
@@ -869,14 +946,14 @@
               }
             }, { small: true, icon: '⬆' }),
             s.type === 'fabric'
-              ? button('친구용 모드팩', async () => {
+              ? button('접속용 모드팩', async () => {
                   const r = await call('addons:exportMrpack', s.id);
                   if (r && r !== true) toast(`모드팩(.mrpack) 저장 — 모드 ${r.count}개. Modrinth 앱·Prism 런처로 열기`, { kind: 'ok', timeout: 8000 });
-                }, { small: true, kind: 'primary', icon: '⇪', title: '친구들이 설치할 모드 목록을 .mrpack으로 내보내기' })
+                }, { small: true, kind: 'primary', icon: '⇪', title: '접속할 때 필요한 모드 목록을 .mrpack으로 내보내기' })
               : null,
           ),
         ),
-        installed,
+        h('div.stack', null, installed, dropZone),
       ),
       append(resultsCard, [h('div.card-head', null, h('div', null, h('h2', null, 'Modrinth에서 찾기'), resultNote)), h('div.stack', null, searchField, h('div.sort-row', null, h('span.note', null, '정렬'), sortSeg), progressBox, results, pager)]),
     );
@@ -985,7 +1062,7 @@
           null,
           h('div.card-head', null, h('h2', null, '게임 규칙')),
           row('서버 이름', '이 앱에서만 보이는 이름', input(draft.name, set('name'))),
-          row('서버 설명', '친구의 서버 목록에 보이는 한 줄', input(draft.motd, set('motd'), { maxLength: 59 })),
+          row('서버 설명', '서버 목록에 보이는 한 줄', input(draft.motd, set('motd'), { maxLength: 59 })),
           row('난이도', '몬스터의 세기와 배고픔 속도', seg(DIFFICULTY, draft.difficulty, set('difficulty'))),
           row('게임 모드', '처음 들어온 사람의 모드', seg(GAMEMODE, draft.gamemode, set('gamemode'))),
           row('최대 인원', '동시에 들어올 수 있는 사람 수', slider({ min: 2, max: 50, value: draft.maxPlayers, onInput: set('maxPlayers'), format: (v) => `${v}명` })),
@@ -1001,7 +1078,7 @@
             'div.card',
             null,
             h('div.card-head', null, h('h2', null, '접속 · 보안')),
-            row('화이트리스트', '목록에 넣은 친구만 접속 (접속자 탭에서 관리)', toggle(draft.whitelist, set('whitelist'))),
+            row('화이트리스트', '목록에 넣은 플레이어만 접속 (접속자 탭에서 관리)', toggle(draft.whitelist, set('whitelist'))),
             row('정품 인증', '끄면 복제 계정도 접속 가능 (위험)', toggle(draft.onlineMode, set('onlineMode'))),
             row('스폰 보호 범위', '스폰 주변은 OP만 수정 가능', slider({ min: 0, max: 32, value: draft.spawnProtection, onInput: set('spawnProtection'), format: (v) => (v ? `${v}칸` : '없음') })),
             row('포트', '보통은 기본값 유지', input(draft.port, (v) => (draft.port = Number(v) || 25565), { type: 'number', min: 1024, max: 65535, style: { maxWidth: '130px' } })),
@@ -1061,14 +1138,40 @@
       version: null,
       versions: {},
       name: '',
+      nameAuto: true, // 직접 고치기 전까지 (버전) (종류) 서버 형식으로 따라간다
+      motdAuto: true, // 직접 고치기 전까지 서버 이름을 따라간다
       memoryMb: specs.recommendedMb,
       optimize: true,
       eula: false,
-      settings: { difficulty: 'normal', gamemode: 'survival', maxPlayers: 10, pvp: true, whitelist: false, hardcore: false, onlineMode: true, motd: '친구들과 함께하는 서버' },
+      settings: { difficulty: 'normal', gamemode: 'survival', maxPlayers: 10, pvp: true, whitelist: false, hardcore: false, onlineMode: true, motd: '' },
       busy: false,
     });
 
     const root = h('div.main-scroll', { style: { paddingTop: '26px' } });
+    const defaultName = () => `${c.version || ''} ${TYPE[c.type].label}`.trim();
+    const nameField = input(c.name, (v) => {
+      c.name = v;
+      c.nameAuto = false;
+      if (v.trim()) nameRow.classList.remove('invalid');
+      syncAutoMotd();
+    }, { maxLength: 40 });
+    const motdField = input(c.settings.motd, (v) => {
+      c.settings.motd = v;
+      c.motdAuto = false;
+    }, { maxLength: 59 });
+    const syncAutoMotd = () => {
+      if (!c.motdAuto) return;
+      c.settings.motd = c.name.trim();
+      motdField.value = c.settings.motd;
+    };
+    const syncAutoName = () => {
+      if (!c.nameAuto) return;
+      c.name = defaultName();
+      nameField.value = c.name;
+      nameRow.classList.remove('invalid');
+      syncAutoMotd();
+    };
+    const nameRow = row('서버 이름', '이 앱에서만 표시 · 비우면 만들 수 없음', nameField);
     const versionBox = h('div');
     const javaBox = h('div.pc-item.well-sm');
     const createBtn = button('서버 만들기', () => create(), { kind: 'primary', icon: '✓', class: 'btn-lg' });
@@ -1094,6 +1197,7 @@
       }
       const v = c.versions[c.type];
       if (!c.version || !v.versions.includes(c.version)) c.version = v.latest;
+      syncAutoName();
       put(versionBox, 
         h(
           'div.inline',
@@ -1103,6 +1207,7 @@
             c.version,
             (x) => {
               c.version = x;
+              syncAutoName();
               checkJava();
             },
           ),
@@ -1150,10 +1255,12 @@
               c.type = key;
               typeCards.querySelectorAll('.type-card').forEach((x) => x.classList.remove('on'));
               e.currentTarget.classList.add('on');
+              renderSide();
+              syncAutoName();
               loadVersions();
             },
           },
-          h('span.type-ico'),
+          typeMark(key, '.type-ico'),
           h('h3', null, t.label),
           h('span.note', null, t.sub),
           h('p', { style: { fontSize: '0.82rem' } }, t.desc),
@@ -1168,11 +1275,17 @@
     const set = (k) => (v) => (c.settings[k] = v);
 
     const create = async () => {
+      if (!c.name.trim()) {
+        nameRow.classList.add('invalid');
+        nameRow.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        nameField.focus();
+        return toast('서버 이름 필요', { kind: 'error' });
+      }
       if (!c.eula) return toast('EULA 동의 필요', { kind: 'error' });
       c.busy = true;
       refreshCreate();
       progressBox.classList.remove('hidden');
-      const s = await call('servers:create', { type: c.type, version: c.version, name: c.name, memoryMb: c.memoryMb, optimize: c.optimize, eula: c.eula, settings: c.settings }, 'create');
+      const s = await call('servers:create', { type: c.type, version: c.version, name: c.name.trim(), memoryMb: c.memoryMb, optimize: c.optimize, eula: c.eula, settings: c.settings }, 'create');
       c.busy = false;
       progressBox.classList.add('hidden');
       refreshCreate();
@@ -1207,8 +1320,8 @@
             'div.card',
             null,
             h('div.card-head', null, h('h2', null, '버전 · 메모리')),
-            row('마인크래프트 버전', '친구들과 같은 버전 사용. 기본값은 최신 안정 버전', versionBox),
-            row('서버 이름', '이 앱에서만 표시', input(c.name, (v) => (c.name = v), { placeholder: '예: 우리들의 야생 서버' })),
+            row('마인크래프트 버전', '접속할 클라이언트와 같은 버전 사용. 기본값은 최신 안정 버전', versionBox),
+            nameRow,
             row('메모리', 'PC 사양 기준 추천값 표시', mem),
             row('자동 최적화', "Aikar's flags · Paper 추천 설정 · 적정 시야 거리" + (c.type === 'fabric' ? ' · 최적화 모드(Lithium 등)' : ''), toggle(c.optimize, (v) => (c.optimize = v))),
           ),
@@ -1220,8 +1333,8 @@
             row('게임 모드', '처음 들어온 사람의 모드', seg(GAMEMODE, c.settings.gamemode, set('gamemode'))),
             row('최대 인원', '동시에 들어올 수 있는 사람 수', slider({ min: 2, max: 50, value: c.settings.maxPlayers, onInput: set('maxPlayers'), format: (v) => `${v}명` })),
             row('PVP', '플레이어끼리 공격 가능', toggle(c.settings.pvp, set('pvp'))),
-            row('화이트리스트', '허락한 친구만 접속', toggle(c.settings.whitelist, set('whitelist'))),
-            row('서버 설명', '서버 목록에 보이는 한 줄', input(c.settings.motd, set('motd'), { maxLength: 59 })),
+            row('화이트리스트', '허락한 플레이어만 접속', toggle(c.settings.whitelist, set('whitelist'))),
+            row('서버 설명', '서버 목록에 보이는 한 줄 · 기본값은 서버 이름', motdField),
           ),
         ),
 
@@ -1265,7 +1378,7 @@
         report.sameVersion ? h('p', null, '같은 버전의 최신 빌드로 교체. 플러그인·모드는 유지') : null,
         report.javaChange ? h('p.brass', null, '다른 Java 버전 필요 → 앱 폴더에 자동 설치') : null,
         report.incompatible && report.incompatible.length
-          ? h('div.card', { style: { padding: '14px 16px' } }, h('h3.bad', null, `새 버전과 안 맞는 ${TYPE[s.type].addon} ${report.incompatible.length}개`), h('p.note', null, '업데이트 시 자동 비활성화. 호환 버전이 나오면 다시 켜기'), h('div.list', null, report.incompatible.map((a) => h('div.list-item', { style: { gridTemplateColumns: 'auto 1fr' } }, dot('bad'), h('span.txt', null, a.title)))))
+          ? h('div.card', { style: { padding: '14px 16px' } }, h('h3.bad', null, `새 버전과 안 맞는 ${TYPE[s.type].addon} ${report.incompatible.length}개`), h('p.note', null, '업데이트 시 자동 비활성화. 호환 버전이 나오면 다시 켜기'), h('div.list', null, report.incompatible.map((a) => h('div.list-item', { style: { gridTemplateColumns: 'auto 1fr' } }, dot('bad'), h('span.txt', null, a.reason ? `${a.title} — ${a.reason}` : a.title)))))
           : null,
         report.compatible && report.compatible.length && !report.sameVersion ? h('p.note', null, `호환되는 ${TYPE[s.type].addon} ${report.compatible.length}개는 새 버전 파일로 자동 교체`) : null,
         report.unknown && report.unknown.length ? h('p.note', null, `직접 넣은 파일 ${report.unknown.length}개(${report.unknown.map((a) => a.title).join(', ')})는 호환 여부 확인 불가`) : null,

@@ -166,7 +166,7 @@ async function installByName(server, serverDir, name, onProgress) {
  * @returns {Promise<{compatible: object[], incompatible: object[], updates: object[]}>}
  */
 async function checkCompatibility(server, gameVersion) {
-  const addons = (server.addons || []).filter((a) => a.sha1);
+  const addons = (server.addons || []).filter((a) => a.sha1 && a.projectId);
   if (!addons.length) return { compatible: [], incompatible: [], updates: [] };
   const res = await request(`${API}/version_files/update`, {
     method: 'POST',
@@ -194,6 +194,40 @@ async function checkCompatibility(server, gameVersion) {
 }
 
 /** 폴더에 있지만 앱이 설치하지 않은 파일도 목록에 보여준다. */
+/** 직접 받은 파일이 Modrinth 에 있는 파일인지 해시로 확인한다. 없으면 null */
+async function lookupByHash(sha1) {
+  try {
+    return await getJson(`${API}/version_file/${sha1}?algorithm=sha1`);
+  } catch (e) {
+    if (e.status === 404) return null;
+    throw e;
+  }
+}
+
+/** Modrinth 버전 정보로 설치 기록을 만든다 (install 과 같은 모양) */
+function recordFromVersion(meta, version, file, extra = {}) {
+  return {
+    projectId: meta.id,
+    slug: meta.slug,
+    title: meta.title,
+    iconUrl: meta.icon_url,
+    clientSide: meta.client_side,
+    serverSide: meta.server_side,
+    versionId: version.id,
+    versionNumber: version.version_number,
+    gameVersions: version.game_versions,
+    fileName: file.filename,
+    url: file.url,
+    size: file.size,
+    sha1: file.hashes.sha1,
+    sha512: file.hashes.sha512,
+    enabled: true,
+    dependencyOf: null,
+    installedAt: Date.now(),
+    ...extra,
+  };
+}
+
 function scanFolder(server, serverDir) {
   const folder = path.join(serverDir, addonFolder(server));
   if (!fs.existsSync(folder)) return [];
@@ -235,10 +269,15 @@ async function findPluginFileByName(server, serverDir, name) {
 }
 
 /** 친구들이 받을 모드팩(.mrpack). 클라이언트에서 쓸 수 없는 서버 전용 모드는 뺀다. */
-async function exportMrpack(server, serverDir, outFile) {
+async function exportMrpack(server, serverDir, outFile, extraFiles = []) {
   const files = [];
+  const overrides = [...extraFiles];
   for (const a of server.addons || []) {
     if (!a.enabled || a.clientSide === 'unsupported') continue;
+    if (!a.url) {
+      overrides.push(a.fileName);
+      continue;
+    }
     let { sha1, sha512 } = a;
     const local = path.join(serverDir, 'mods', a.fileName);
     if ((!sha1 || !sha512) && fs.existsSync(local)) {
@@ -265,10 +304,14 @@ async function exportMrpack(server, serverDir, outFile) {
   await new Promise((resolve, reject) => {
     const zip = new yazl.ZipFile();
     zip.addBuffer(Buffer.from(JSON.stringify(index, null, 2)), 'modrinth.index.json');
+    for (const f of overrides) {
+      const local = path.join(serverDir, 'mods', f);
+      if (fs.existsSync(local)) zip.addFile(local, `overrides/mods/${f}`);
+    }
     zip.end();
     zip.outputStream.pipe(fs.createWriteStream(outFile)).on('close', resolve).on('error', reject);
   });
-  return { file: outFile, count: files.length };
+  return { file: outFile, count: files.length + overrides.length };
 }
 
 module.exports = {
@@ -280,6 +323,9 @@ module.exports = {
   installByName,
   compatibleVersion,
   checkCompatibility,
+  lookupByHash,
+  recordFromVersion,
+  project,
   scanFolder,
   setEnabled,
   removeFile,
