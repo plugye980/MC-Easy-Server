@@ -127,7 +127,7 @@ function registerIpc() {
   handle('players:action', (id, action, name) => manager.playerAction(id, action, name));
 
   // 추가 기능
-  handle('addons:search', (id, q, opts) => modrinth.search(Servers.get(id), q, opts));
+  handle('addons:search', (id, q, opts = {}) => modrinth.search(modrinth.asKind(Servers.get(id), opts.kind), q, opts));
   handle('addons:list', (id) => manager.addons(id));
   // 파일에서 직접 추가: 경로가 없으면 파일 선택 창을 연다 (끌어다 놓기는 경로를 넘긴다)
   handle('addons:importFiles', async (id, filePaths) => {
@@ -136,17 +136,17 @@ function registerIpc() {
       const server = Servers.get(id);
       const datapack = server.type === 'vanilla';
       const r = await dialog.showOpenDialog(win, {
-        title: datapack ? '데이터팩 파일 선택' : server.type === 'paper' ? '플러그인 파일 선택' : '모드 파일 선택',
+        title: datapack ? '데이터팩 파일 선택' : server.type === 'paper' ? '플러그인 파일 선택' : server.type === 'hybrid' ? '플러그인·모드 파일 선택' : '모드 파일 선택',
         properties: ['openFile', 'multiSelections'],
-        filters: [datapack ? { name: '데이터팩', extensions: ['zip'] } : { name: server.type === 'paper' ? '플러그인' : server.type === 'forge' ? 'Forge 모드' : 'Fabric 모드', extensions: ['jar'] }],
+        filters: [datapack ? { name: '데이터팩', extensions: ['zip'] } : { name: server.type === 'paper' ? '플러그인' : server.type === 'hybrid' ? '플러그인·Forge 모드' : server.type === 'forge' ? 'Forge 모드' : 'Fabric 모드', extensions: ['jar'] }],
       });
       if (r.canceled) return null;
       files = r.filePaths;
     }
     return manager.importFiles(id, files);
   });
-  handle('addons:installByName', (id, name) => manager.installByName(id, name, progressTo(`addon-${id}`)));
-  handle('addons:install', (id, projectId) => manager.installAddon(id, projectId, progressTo(`addon-${id}`)));
+  handle('addons:installByName', (id, name, kind) => manager.installByName(id, name, progressTo(`addon-${id}`), kind));
+  handle('addons:install', (id, projectId, kind) => manager.installAddon(id, projectId, progressTo(`addon-${id}`), kind));
   handle('addons:toggle', (id, fileName, enabled) => manager.setAddonEnabled(id, fileName, enabled));
   handle('addons:remove', (id, fileName) => manager.removeAddon(id, fileName));
   handle('addons:update', (id) => manager.updateAddons(id));
@@ -162,7 +162,7 @@ function registerIpc() {
     const extra = (await manager.addons(id))
       .filter((a) => a.manual && a.enabled && a.meta && ['fabric', 'forge'].includes(a.meta.kind) && a.meta.environment !== 'server')
       .map((a) => a.fileName);
-    const r = await modrinth.exportModsZip(server, manager.dir(id), filePath, extra);
+    const r = await modrinth.exportModsZip(modrinth.asKind(server, 'mod'), manager.dir(id), filePath, extra);
     shell.showItemInFolder(filePath);
     return r;
   });
@@ -307,7 +307,7 @@ function registerIpc() {
       case 'install-deps': {
         const done = [];
         for (const name of payload.names || []) {
-          const r = await manager.installByName(id, name, progressTo(`addon-${id}`));
+          const r = await manager.installByName(id, name, progressTo(`addon-${id}`), payload.kind);
           done.push(...r.installed.map((a) => a.title));
         }
         return `${done.join(', ')} 설치 — 재시작 시 적용`;

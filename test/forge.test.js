@@ -102,7 +102,7 @@ test('Forge 서버: Modrinth 필터 · mods 폴더 · 의존성 오류 안내', 
   assert.strictEqual(modrinth.addonFolder({ type: 'forge' }), 'mods');
   const a = new ErrorTranslator().check("\tMod ID: 'flywheel', Requested by: 'create', Expected range: '[0.6.10,)', Actual version: '[MISSING]'");
   assert.strictEqual(a.kind, 'forge-missing-dep');
-  assert.deepStrictEqual(a.actions[0].payload, { names: ['flywheel'] });
+  assert.deepStrictEqual(a.actions[0].payload, { names: ['flywheel'], kind: 'mod' });
   assert.deepStrictEqual(a.actions[1].payload, { modId: 'create' });
 });
 
