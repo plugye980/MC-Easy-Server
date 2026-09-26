@@ -141,6 +141,11 @@ function desiredRules(server) {
 }
 const rulesPatch = (desired) => ({ gameRules: Object.keys(desired).length ? desired : undefined, ruleOverrides: undefined, pendingRules: undefined });
 
+/** 설정 명령의 대답 (바닐라 문구) */
+const SETTING_OK = /is now set to|is currently set to|difficulty has been set|difficulty did not change|default game ?mode is now|Whitelist is (?:now|already) turned|Nothing changed/i;
+const SETTING_ERROR = /Unknown or incomplete command|Incorrect argument for command|Unknown game ?rule|Unknown dimension|Invalid (?:integer|boolean)|Expected (?:integer|boolean)|does not exist/i;
+const SETTING_REPLY_TIMEOUT = 6000;
+
 /** 이보다 높은 /tick rate 는 경고 (기본 20) */
 const TICK_RATE_WARN = 100;
 
@@ -330,7 +335,10 @@ class ServerManager extends EventEmitter {
         launch = forge.launchArgs(dir, server.version, server.build);
         if (!launch) throw new Error('Forge 실행 파일 없음 — 업데이트 버튼으로 같은 버전을 다시 설치');
       }
-      const args = [...flags, ...optimize.gcLogArgs(rt.major || server.javaMajor), ...agent, ...launch, 'nogui'];
+      // Forge 는 콘솔 입력을 JLine 터미널로 받는데, 다른 프로그램이 입력을 넘겨 주는 경우(Windows)
+      // 명령이 서버에 닿지 않을 수 있다. JLine 을 끄면 표준 입력을 그대로 읽는다.
+      const consoleArgs = server.type === 'forge' ? ['-Dterminal.jline=false', '-Dterminal.ansi=false'] : [];
+      const args = [...flags, ...optimize.gcLogArgs(rt.major || server.javaMajor), ...agent, ...consoleArgs, ...launch, 'nogui'];
       this.log(id, `▶ ${path.basename(rt.bin)} ${args.join(' ')}`, 'app');
       const proc = spawn(rt.bin, args, { cwd: dir, windowsHide: true });
       i.proc = proc;
@@ -455,6 +463,7 @@ class ServerManager extends EventEmitter {
 
     if (i.status === 'starting' && RE.done.test(msg)) this.onReady(id);
 
+    this.checkSettingReply(id, msg);
     if (!noise) this.log(id, line);
     const alert = i.translator.check(line);
     if (alert) this.emit('alert', { serverId: id, ...alert });
@@ -568,6 +577,7 @@ class ServerManager extends EventEmitter {
     i.proc = null;
     i.status = 'stopped';
     i.players.clear();
+    i.replyChecks = [];
     i.metrics.tps = null;
     i.metrics.memoryMb = null;
     i.metrics.processMb = null;
@@ -672,6 +682,67 @@ class ServerManager extends EventEmitter {
     }
   }
 
+  /** 설정용 명령: 보내고 서버의 대답을 확인한다 (거부되거나 대답이 없으면 알림) */
+  settingCommand(id, cmd) {
+    const i = this.inst(id);
+    this.command(id, cmd);
+    const check = { cmd, done: false };
+    (i.replyChecks = i.replyChecks || []).push(check);
+    setTimeout(() => {
+      if (check.done) return;
+      check.done = true;
+      i.replyChecks = (i.replyChecks || []).filter((c) => c !== check);
+      if (i.proc && i.status === 'running') this.reportSettingProblem(id, { cmd, reply: null });
+    }, SETTING_REPLY_TIMEOUT);
+  }
+
+  /** 서버 출력 한 줄이 기다리던 설정 명령의 대답인지 본다 (보낸 순서대로) */
+  checkSettingReply(id, msg) {
+    const i = this.inst(id);
+    if (!i.replyChecks || !i.replyChecks.length) return;
+    const ok = SETTING_OK.test(msg);
+    const bad = !ok && SETTING_ERROR.test(msg);
+    if (!ok && !bad) return;
+    const check = i.replyChecks.shift();
+    check.done = true;
+    // 켜지지 않은 차원(네더·엔드 끔)은 문제가 아니다
+    if (bad && !/Unknown dimension|does not exist/i.test(msg)) this.reportSettingProblem(id, { cmd: check.cmd, reply: msg });
+  }
+
+  reportSettingProblem(id, problem) {
+    const i = this.inst(id);
+    (i.replyProblems = i.replyProblems || []).push(problem);
+    if (i.replyReport) return;
+    // 한꺼번에 보낸 명령은 알림 하나로 묶는다
+    i.replyReport = setTimeout(() => {
+      const list = i.replyProblems || [];
+      i.replyProblems = [];
+      i.replyReport = null;
+      const rejected = list.filter((p) => p.reply);
+      const silent = list.filter((p) => !p.reply);
+      if (rejected.length) {
+        this.emit('alert', {
+          serverId: id,
+          id: `setting-rejected-${Date.now()}`,
+          severity: 'error',
+          title: '서버가 설정 명령을 거부함',
+          message: rejected.slice(0, 2).map((p) => `${p.cmd} → ${p.reply}`).join(' · '),
+          actions: [{ id: 'open-tab', label: '콘솔 보기', payload: { tab: 'console' } }],
+        });
+      }
+      if (silent.length) {
+        this.emit('alert', {
+          serverId: id,
+          id: `setting-silent-${Date.now()}`,
+          severity: 'error',
+          title: '서버가 설정 명령에 대답하지 않음',
+          message: `${silent[0].cmd}${silent.length > 1 ? ` 외 ${silent.length - 1}개` : ''} → 콘솔 입력이 서버에 닿지 않는 상태일 수 있음. 서버를 다시 켜 보고, 계속되면 콘솔 탭 내용 확인`,
+          actions: [{ id: 'open-tab', label: '콘솔 보기', payload: { tab: 'console' } }],
+        });
+      }
+    }, 400);
+  }
+
   /** 다음에 켜질 때 보낼 명령 (같은 key 는 덮어씀) */
   queueCommand(id, key, cmd) {
     Servers.update(id, (s) => ({ ...s, pendingCommands: { ...(s.pendingCommands || {}), [key]: cmd } }));
@@ -753,7 +824,7 @@ class ServerManager extends EventEmitter {
       if (cmd && running) {
         // 난이도는 월드마다 따로 저장되므로 모든 월드에, 나머지는 서버 전체 명령
         if (k === 'difficulty') this.worldCommand(id, cmd);
-        else this.command(id, cmd);
+        else this.settingCommand(id, cmd);
         now.push(SETTING_LABELS[k] || k);
       } else if (!running) {
         now.push(SETTING_LABELS[k] || k);
@@ -786,7 +857,7 @@ class ServerManager extends EventEmitter {
    */
   worldCommand(id, cmd) {
     const server = Servers.get(id);
-    if (server.type !== 'paper') return this.command(id, cmd);
+    if (server.type !== 'paper') return this.settingCommand(id, cmd);
     const dir = this.dir(id);
     const level = server.levelName || 'world';
     const dims = [
@@ -794,7 +865,7 @@ class ServerManager extends EventEmitter {
       ['minecraft:the_nether', `${level}_nether`],
       ['minecraft:the_end', `${level}_the_end`],
     ].filter(([dim, folder]) => dim === 'minecraft:overworld' || fs.existsSync(path.join(dir, folder)));
-    for (const [dim] of dims) this.command(id, `execute in ${dim} run ${cmd}`);
+    for (const [dim] of dims) this.settingCommand(id, `execute in ${dim} run ${cmd}`);
   }
 
   /** 켜질 때마다 앱에서 정한 난이도·게임 규칙을 모든 월드에 다시 맞춘다 */
