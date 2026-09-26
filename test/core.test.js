@@ -109,7 +109,7 @@ test('오류 번역', () => {
   const api = t.check('org.bukkit.plugin.InvalidPluginException: Unsupported API version 1.13');
   assert.strictEqual(api.kind, 'plugin-api-version');
   assert.match(api.message, /OldPlugin/);
-  assert.match(api.message, /비활성화할까요/);
+  assert.match(api.message, /맞지 않음 → 비활성화/);
   assert.strictEqual(api.actions[0].payload.file, 'OldPlugin.jar');
 
   t.check("[12:00:02 ERROR]: Could not load 'plugins/EssentialsChat.jar' in folder 'plugins'");

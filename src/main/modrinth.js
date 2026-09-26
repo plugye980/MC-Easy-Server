@@ -90,8 +90,8 @@ async function install(server, serverDir, projectId, onProgress = () => {}, ctx 
 
   const [meta, version] = await Promise.all([project(projectId), compatibleVersion(server, projectId)]);
   if (!version) {
-    const reason = `${server.version} ${server.type === 'fabric' ? 'Fabric' : server.type === 'paper' ? 'Paper' : ''} 버전이 없어요`;
-    if (top) throw new Error(`"${meta.title}"은(는) 현재 서버(${reason.trim()}) 와 맞는 파일이 없어요.`);
+    const reason = `${server.version} ${server.type === 'fabric' ? 'Fabric' : server.type === 'paper' ? 'Paper' : ''} 버전 없음`;
+    if (top) throw new Error(`"${meta.title}": 현재 서버와 맞는 파일 없음 (${reason.trim()})`);
     ctx.skipped.push({ title: meta.title, reason });
     return ctx;
   }
@@ -147,7 +147,7 @@ async function install(server, serverDir, projectId, onProgress = () => {}, ctx 
 /** 이름으로 찾아 설치 (로그에서 "Vault가 필요해요" 같은 경우) */
 async function installByName(server, serverDir, name, onProgress) {
   const { hits } = await search(server, name, { limit: 10 });
-  if (!hits.length) throw new Error(`Modrinth에서 "${name}"을(를) 찾지 못했어요.`);
+  if (!hits.length) throw new Error(`Modrinth에서 "${name}" 찾기 실패`);
   const norm = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
   const hit = hits.find((h) => norm(h.title) === norm(name) || norm(h.slug) === norm(name)) || hits[0];
   return install(server, serverDir, hit.projectId, onProgress);
@@ -250,7 +250,7 @@ async function exportMrpack(server, serverDir, outFile) {
     game: 'minecraft',
     versionId: new Date().toISOString().slice(0, 10),
     name: `${server.name} 접속용 모드팩`,
-    summary: `${server.name} 서버(${server.version}, Fabric)에 접속하려면 이 모드팩을 설치하세요.`,
+    summary: `${server.name} 서버(${server.version}, Fabric) 접속용 모드팩`,
     files,
     dependencies: { minecraft: server.version, 'fabric-loader': server.loaderVersion },
   };

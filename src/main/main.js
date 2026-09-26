@@ -31,7 +31,7 @@ function createWindow() {
     minWidth: 1040,
     minHeight: 680,
     backgroundColor: settings.theme === 'light' ? '#fbfeff' : '#212429',
-    title: 'MC Easy Server',
+    title: 'MCES',
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -57,7 +57,7 @@ function createWindow() {
 async function safeQuit() {
   if (quitting) return;
   quitting = true;
-  send('app:closing', { message: '서버를 저장하고 끄는 중이에요. 잠시만 기다려 주세요…' });
+  send('app:closing', { message: '서버 저장 후 종료 중…' });
   try {
     await manager.stopAll();
   } finally {
@@ -156,7 +156,7 @@ function registerIpc() {
   });
   handle('upnp:open', async (id) => {
     const server = Servers.get(id);
-    const r = await upnp.openPort(server.port, `MC Easy Server - ${server.name}`);
+    const r = await upnp.openPort(server.port, `MCES - ${server.name}`);
     manager.updateSettings(id, { network: { mode: 'upnp', address: r.address } });
     return r;
   });
@@ -182,52 +182,52 @@ function registerIpc() {
         const port = await reach.findFreePort(server.port + 1, taken);
         manager.updateSettings(id, { port });
         await manager.start(id);
-        return `포트를 ${port}번으로 바꿨어요.`;
+        return `포트 ${port}번으로 변경`;
       }
       case 'lower-memory': {
         const mb = Math.min(system.specs().recommendedMb, server.memoryMb - 512);
         manager.updateSettings(id, { memoryMb: Math.max(1024, mb) });
         await manager.start(id);
-        return `메모리를 ${(Math.max(1024, mb) / 1024).toFixed(1)}GB로 낮췄어요.`;
+        return `메모리 ${(Math.max(1024, mb) / 1024).toFixed(1)}GB로 변경`;
       }
       case 'raise-memory': {
         const max = system.specs().maxMb;
         const mb = Math.min(max, server.memoryMb + 1024);
         manager.updateSettings(id, { memoryMb: mb });
-        return `메모리를 ${(mb / 1024).toFixed(1)}GB로 늘렸어요. 다시 켜면 적용돼요.`;
+        return `메모리 ${(mb / 1024).toFixed(1)}GB로 변경 — 재시작 시 적용`;
       }
       case 'lower-view': {
         const cur = manager.get(id).settings;
         const view = Math.max(4, cur.viewDistance - 2);
         manager.updateSettings(id, { viewDistance: view, simulationDistance: Math.min(cur.simulationDistance, view) });
-        return `시야 거리를 ${view}칸으로 줄였어요. 다시 켜면 적용돼요.`;
+        return `시야 거리 ${view}칸으로 변경 — 재시작 시 적용`;
       }
       case 'fix-java': {
         const need = payload.need ? versions.normalizeJavaFeature(payload.need) : await versions.requiredJava(server.version);
         await java.ensure(need, progressTo(`java-${need}`));
         Servers.update(id, { javaMajor: need });
         await manager.start(id);
-        return `Java ${need}로 다시 켰어요.`;
+        return `Java ${need}로 재시작`;
       }
       case 'disable-optimize': {
         manager.updateSettings(id, { optimize: false });
         await manager.start(id);
-        return '최적화 옵션을 끄고 다시 켰어요. 설정 탭에서 다시 켤 수 있어요.';
+        return '최적화 옵션 끄고 재시작 (설정 탭에서 변경 가능)';
       }
       case 'accept-eula': {
         fs.writeFileSync(path.join(paths.serverDir(id), 'eula.txt'), 'eula=true\n');
         await manager.start(id);
-        return 'EULA에 동의하고 다시 켰어요.';
+        return 'EULA 동의 후 재시작';
       }
       case 'disable-plugin': {
         let file = payload.file;
         if (file) manager.setAddonEnabled(id, file, false);
         else file = await manager.disablePluginByName(id, payload.name);
-        return `${file} 을(를) 비활성화했어요. 서버를 다시 켜면 적용돼요.`;
+        return `${file} 비활성화 — 재시작 시 적용`;
       }
       case 'disable-mod': {
         const file = manager.disableModById(id, payload.modId);
-        return `${file} 을(를) 비활성화했어요.`;
+        return `${file} 비활성화`;
       }
       case 'install-deps': {
         const done = [];
@@ -235,7 +235,7 @@ function registerIpc() {
           const r = await manager.installByName(id, name, progressTo(`addon-${id}`));
           done.push(...r.installed.map((a) => a.title));
         }
-        return `${done.join(', ')} 을(를) 설치했어요. 서버를 다시 켜면 적용돼요.`;
+        return `${done.join(', ')} 설치 — 재시작 시 적용`;
       }
       default:
         return null;
@@ -273,7 +273,7 @@ function wireEvents() {
       const address = await tunnel.start(s);
       if (address) manager.updateSettings(serverId, { network: { mode: 'tunnel', address } });
     } catch (e) {
-      send('app:notice', { severity: 'error', title: '터널을 연결하지 못했어요', message: e.message });
+      send('app:notice', { severity: 'error', title: '터널 연결 실패', message: e.message });
     }
   });
   tunnel.on('state', (s) => send('tunnel:state', s));

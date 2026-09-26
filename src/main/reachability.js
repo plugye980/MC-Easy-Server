@@ -120,7 +120,7 @@ async function findFreePort(start = 25565, taken = []) {
     if (taken.includes(p)) continue;
     if (await isPortFree(p)) return p;
   }
-  throw new Error('비어 있는 포트를 찾지 못했어요.');
+  throw new Error('빈 포트 없음');
 }
 
 module.exports = { ping, externalCheck, splitAddress, isPortFree, findFreePort, varint, readVarint };

@@ -109,8 +109,8 @@ class ServerManager extends EventEmitter {
    * @param {object} o { name, type, version, memoryMb, eula, optimize, settings:{...friendly} }
    */
   async create(o, onProgress = () => {}) {
-    if (!o.eula) throw new Error('EULA에 동의해야 서버를 만들 수 있어요.');
-    if (!['paper', 'fabric', 'vanilla'].includes(o.type)) throw new Error('서버 종류를 골라 주세요.');
+    if (!o.eula) throw new Error('EULA 동의 필요');
+    if (!['paper', 'fabric', 'vanilla'].includes(o.type)) throw new Error('서버 종류 선택 필요');
     const id = crypto.randomUUID();
     const dir = this.dir(id);
     fs.mkdirSync(dir, { recursive: true });
@@ -140,7 +140,7 @@ class ServerManager extends EventEmitter {
         'level-name': 'world',
       };
       props.write(path.join(dir, 'server.properties'), values);
-      fs.writeFileSync(path.join(dir, 'eula.txt'), `# https://aka.ms/MinecraftEULA 에 동의함 (MC Easy Server)\neula=true\n`);
+      fs.writeFileSync(path.join(dir, 'eula.txt'), `# https://aka.ms/MinecraftEULA 에 동의함 (MCES)\neula=true\n`);
 
       const server = {
         id,
@@ -168,7 +168,7 @@ class ServerManager extends EventEmitter {
           try {
             await this.installAddon(id, slug, onProgress);
           } catch (e) {
-            this.emit('notice', { id, severity: 'info', title: '최적화 모드 일부를 건너뛰었어요', message: `${slug}: ${e.message}` });
+            this.emit('notice', { id, severity: 'info', title: '최적화 모드 일부 설치 건너뜀', message: `${slug}: ${e.message}` });
           }
         }
       }
@@ -184,7 +184,7 @@ class ServerManager extends EventEmitter {
   // ---------- 실행 ----------
   async start(id) {
     const server = Servers.get(id);
-    if (!server) throw new Error('서버를 찾을 수 없어요.');
+    if (!server) throw new Error('서버 없음');
     const i = this.inst(id);
     if (i.proc) return;
     const dir = this.dir(id);
@@ -306,10 +306,12 @@ class ServerManager extends EventEmitter {
     if (server.type === 'paper' && server.optimize && !server.optimizedApplied) {
       if (optimize.applyPaperConfigs(this.dir(id))) {
         Servers.update(id, { optimizedApplied: true });
-        this.emit('notice', { id, severity: 'info', title: 'Paper 최적화 설정을 넣었어요', message: '다음에 서버를 다시 켤 때부터 적용돼요.' });
+        this.emit('notice', { id, severity: 'info', title: 'Paper 최적화 설정 적용', message: '다음 실행부터 적용' });
       }
     }
     this.poll(id);
+    // 그래프가 바로 선을 그릴 수 있게 두 번째 측정을 앞당긴다
+    i.timers.push(setTimeout(() => this.poll(id), 1500));
     i.timers.push(setInterval(() => this.poll(id), 5000));
     i.timers.push(setInterval(() => this.sendPoll(id, 'list'), 30000));
     this.scheduleBackup(id);
@@ -358,14 +360,14 @@ class ServerManager extends EventEmitter {
     i.metrics.memoryMb = 0;
     i.startedAt = null;
     try { pidusage.clear(); } catch { /* 무시 */ }
-    this.log(id, `■ 서버가 멈췄어요 (종료 코드 ${code})`, 'app');
+    this.log(id, `■ 서버 종료 (종료 코드 ${code})`, 'app');
     if (!wasStopping && code !== 0) {
       this.emit('alert', {
         serverId: id,
         id: `crash-${Date.now()}`,
         severity: 'error',
-        title: '서버가 예기치 않게 꺼졌어요',
-        message: '위에 나온 안내가 있으면 먼저 확인해 주세요. 콘솔 탭에서 자세한 로그를 볼 수 있어요.',
+        title: '서버 비정상 종료',
+        message: '위 안내 먼저 확인. 자세한 로그는 콘솔 탭',
         actions: [{ id: 'open-tab', label: '콘솔 보기', payload: { tab: 'console' } }],
       });
     }
@@ -400,7 +402,7 @@ class ServerManager extends EventEmitter {
       const proc = i.proc;
       setTimeout(() => {
         if (i.proc === proc) {
-          this.log(id, '제한 시간 안에 멈추지 않아 강제로 종료해요.', 'error');
+          this.log(id, '제한 시간 초과 — 강제 종료', 'error');
           proc.kill('SIGKILL');
         }
       }, timeout);
@@ -422,7 +424,7 @@ class ServerManager extends EventEmitter {
 
   command(id, cmd) {
     const i = this.inst(id);
-    if (!i.proc) throw new Error('서버가 꺼져 있어요.');
+    if (!i.proc) throw new Error('서버 꺼짐');
     const clean = String(cmd).replace(/^\//, '').replace(/[\r\n]/g, ' ').trim();
     if (!clean) return;
     this.log(id, `> ${clean}`, 'cmd');
@@ -447,9 +449,9 @@ class ServerManager extends EventEmitter {
   }
 
   playerAction(id, action, name) {
-    if (!/^[A-Za-z0-9_.]{2,17}$/.test(name)) throw new Error('플레이어 이름이 올바르지 않아요.');
+    if (!/^[A-Za-z0-9_.]{2,17}$/.test(name)) throw new Error('잘못된 플레이어 이름');
     const cmds = {
-      kick: `kick ${name} 서버 관리자에 의해 퇴장되었습니다`,
+      kick: `kick ${name} 관리자에 의해 퇴장`,
       op: `op ${name}`,
       deop: `deop ${name}`,
       'whitelist-add': `whitelist add ${name}`,
@@ -457,7 +459,7 @@ class ServerManager extends EventEmitter {
       ban: `ban ${name}`,
       pardon: `pardon ${name}`,
     };
-    if (!cmds[action]) throw new Error('알 수 없는 동작이에요.');
+    if (!cmds[action]) throw new Error('알 수 없는 동작');
     this.command(id, cmds[action]);
     setTimeout(() => this.emit('players-changed', { serverId: id }), 800);
   }
@@ -541,7 +543,7 @@ class ServerManager extends EventEmitter {
   async disablePluginByName(id, name) {
     const server = Servers.get(id);
     const file = await modrinth.findPluginFileByName(server, this.dir(id), name);
-    if (!file) throw new Error(`"${name}" 파일을 찾지 못했어요. 추가 기능 탭에서 직접 꺼 주세요.`);
+    if (!file) throw new Error(`"${name}" 파일 없음 — 플러그인 탭에서 직접 끄기`);
     this.setAddonEnabled(id, file, false);
     return file;
   }
@@ -552,7 +554,7 @@ class ServerManager extends EventEmitter {
     const norm = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
     const all = this.addons(id);
     const hit = all.find((a) => norm(a.slug || '') === norm(modId) || norm(a.fileName).startsWith(norm(modId)));
-    if (!hit) throw new Error(`"${modId}" 모드 파일을 찾지 못했어요. 추가 기능 탭에서 직접 꺼 주세요.`);
+    if (!hit) throw new Error(`"${modId}" 모드 파일 없음 — 모드 탭에서 직접 끄기`);
     this.setAddonEnabled(id, hit.fileName, false);
     return hit.fileName;
   }
@@ -591,7 +593,7 @@ class ServerManager extends EventEmitter {
 
   async applyUpdate(id, targetVersion, onProgress = () => {}) {
     const server = Servers.get(id);
-    if (versions.compareVersions(targetVersion, server.version) < 0) throw new Error('낮은 버전으로는 되돌릴 수 없어요 (월드가 손상될 수 있어요).');
+    if (versions.compareVersions(targetVersion, server.version) < 0) throw new Error('낮은 버전으로 되돌리기 불가 (월드 손상 위험)');
     const wasRunning = !!this.inst(id).proc;
     if (wasRunning) await this.stop(id);
     const dir = this.dir(id);
@@ -665,7 +667,7 @@ class ServerManager extends EventEmitter {
   }
 
   async restoreBackup(id, file) {
-    if (this.inst(id).proc) throw new Error('복원하려면 먼저 서버를 꺼 주세요.');
+    if (this.inst(id).proc) throw new Error('복원은 서버를 끈 뒤 가능');
     const server = Servers.get(id);
     await backup.restore(id, this.dir(id), server.levelName, file);
     this.emit('backup', { serverId: id });

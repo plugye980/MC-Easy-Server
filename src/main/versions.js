@@ -152,7 +152,7 @@ async function fabricJar(mc) {
 async function vanillaJar(mc) {
   const meta = await mojangVersionMeta(mc);
   if (!meta || !meta.downloads || !meta.downloads.server) {
-    throw new Error(`${mc} 버전은 공식 서버 파일이 없어요.`);
+    throw new Error(`${mc} 버전은 공식 서버 파일 없음`);
   }
   return { url: meta.downloads.server.url, fileName: `minecraft_server.${mc}.jar`, sha1: meta.downloads.server.sha1, build: mc };
 }

@@ -28,7 +28,7 @@ async function playitApi(route, body, secret, fetchImpl = fetch) {
   const headers = { 'Content-Type': 'application/json', 'User-Agent': USER_AGENT };
   if (secret) headers.Authorization = `Agent-Key ${secret}`;
   const res = await fetchImpl(`${API}${route}`, { method: 'POST', headers, body: JSON.stringify(body || {}), signal: AbortSignal.timeout(15000) });
-  if (res.status === 429) throw Object.assign(new Error('playit 요청이 너무 많아요. 잠시 뒤 다시 시도해 주세요.'), { retry: true });
+  if (res.status === 429) throw Object.assign(new Error('playit 요청 과다 — 잠시 뒤 다시 시도'), { retry: true });
   const json = await res.json();
   if (json.status === 'success') return json.data;
   const detail = typeof json.data === 'string' ? json.data : JSON.stringify(json.data || json);
@@ -101,7 +101,7 @@ class Tunnel extends EventEmitter {
   async ensureBinary(onProgress = () => {}) {
     if (fs.existsSync(this.bin)) return this.bin;
     const asset = assetName();
-    if (!asset) throw new Error('macOS에서는 playit 터널을 앱 안에서 실행할 수 없어요. playit.gg 앱을 직접 설치하고, 주소 옆 ✎ 버튼으로 주소를 넣어 주세요.');
+    if (!asset) throw new Error('macOS는 앱 내 playit 실행 불가 — playit.gg 앱을 직접 설치하고 주소 옆 ✎ 버튼으로 주소 입력');
     fs.mkdirSync(this.dir, { recursive: true });
     this.set({ status: 'downloading', message: '터널 프로그램(playit) 내려받는 중' });
     await download(`${RELEASE}/${asset}`, this.bin, {
@@ -121,12 +121,12 @@ class Tunnel extends EventEmitter {
     this.claiming = (async () => {
       const code = crypto.randomBytes(5).toString('hex');
       const url = `https://playit.gg/claim/${code}`;
-      this.set({ status: 'claiming', claimUrl: url, message: '브라우저에서 playit.gg 연결을 승인해 주세요' });
+      this.set({ status: 'claiming', claimUrl: url, message: '브라우저에서 playit.gg 연결 승인 대기' });
       this.emit('open-url', url);
       const deadline = Date.now() + 15 * 60 * 1000;
       // 1) 사용자가 브라우저에서 승인할 때까지
       for (;;) {
-        if (Date.now() > deadline) throw new Error('playit 연결 승인 시간이 지났어요. "터널 연결"을 다시 눌러 주세요.');
+        if (Date.now() > deadline) throw new Error('playit 연결 승인 시간 초과 — "터널 연결" 다시 실행');
         let res;
         try {
           res = await this.api('/claim/setup', { code, agent_type: 'self-managed', version: `playit ${AGENT_VERSION}` });
@@ -137,7 +137,7 @@ class Tunnel extends EventEmitter {
         }
         const s = String(res).toLowerCase().replace(/[^a-z]/g, '');
         if (s === 'useraccepted') break;
-        if (s === 'userrejected') throw new Error('playit.gg에서 연결을 거절했어요.');
+        if (s === 'userrejected') throw new Error('playit.gg에서 연결 거절됨');
         await sleep(1000);
       }
       // 2) 비밀키 받기
@@ -154,7 +154,7 @@ class Tunnel extends EventEmitter {
         } catch (e) {
           if (!e.fail && !e.retry) throw e;
         }
-        if (Date.now() > deadline) throw new Error('playit 비밀키를 받지 못했어요. 다시 시도해 주세요.');
+        if (Date.now() > deadline) throw new Error('playit 비밀키 발급 실패 — 다시 시도');
         await sleep(2000);
       }
     })();
@@ -178,7 +178,7 @@ class Tunnel extends EventEmitter {
       try {
         data = await this.rundata();
       } catch (e) {
-        if (i >= 5) throw new Error(`playit에 연결하지 못했어요: ${e.message}`);
+        if (i >= 5) throw new Error(`playit 연결 실패: ${e.message}`);
         await sleep(2000);
       }
     }
@@ -204,7 +204,7 @@ class Tunnel extends EventEmitter {
         }
       }
       if (!created) {
-        throw new Error(`playit 터널을 자동으로 만들지 못했어요 (${lastError && lastError.message}). https://playit.gg/account/agents/${data.agent_id} 에서 Minecraft Java 터널을 추가하고 로컬 포트를 ${server.port}로 맞춰 주세요.`);
+        throw new Error(`playit 터널 자동 생성 실패 (${lastError && lastError.message}) — https://playit.gg/account/agents/${data.agent_id} 에서 Minecraft Java 터널 추가, 로컬 포트 ${server.port}`);
       }
     }
     // 새 터널은 주소가 배정될 때까지 잠시 걸린다
@@ -213,12 +213,12 @@ class Tunnel extends EventEmitter {
       data = await this.rundata();
       t = pickTunnel(data, name);
     }
-    if (!t) throw new Error(`터널 주소 배정이 늦어지고 있어요. https://playit.gg/account/agents/${data.agent_id} 에서 확인해 주세요.`);
+    if (!t) throw new Error(`터널 주소 배정 지연 — https://playit.gg/account/agents/${data.agent_id} 에서 확인`);
     const port = tunnelLocalPort(t);
     if (port && port !== Number(server.port)) {
-      this.set({ message: `playit 터널이 ${port}번 포트로 연결돼 있어요. playit.gg에서 로컬 포트를 ${server.port}로 바꿔 주세요.` });
+      this.set({ message: `playit 터널이 ${port}번 포트로 연결됨 — playit.gg에서 로컬 포트를 ${server.port}로 변경 필요` });
     }
-    if (t.disabled_reason) this.set({ message: `playit 터널이 꺼져 있어요: ${t.disabled_reason}` });
+    if (t.disabled_reason) this.set({ message: `playit 터널 꺼짐: ${t.disabled_reason}` });
     this.set({ addresses: { ...this.state.addresses, [server.id]: t.display_address } });
     return t.display_address;
   }
@@ -252,7 +252,7 @@ class Tunnel extends EventEmitter {
     this.proc.on('error', (e) => this.set({ status: 'error', message: `playit 실행 실패: ${e.message}` }));
     this.proc.on('exit', (code) => {
       this.proc = null;
-      if (this.state.status !== 'idle') this.set({ status: code === 0 ? 'idle' : 'error', message: code === 0 ? null : `터널이 멈췄어요 (코드 ${code})` });
+      if (this.state.status !== 'idle') this.set({ status: code === 0 ? 'idle' : 'error', message: code === 0 ? null : `터널 중지됨 (코드 ${code})` });
     });
   }
 
