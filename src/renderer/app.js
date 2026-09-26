@@ -511,7 +511,7 @@
     const running = s.status === 'running';
     const tpsGauge = Charts.gauge({ max: 20, label: 'TPS' });
     const memGauge = Charts.gauge({ max: 100, label: '메모리' });
-    const cpuGauge = Charts.gauge({ max: 100, label: 'CPU' });
+    const cpuGauge = Charts.gauge({ max: 100, label: 'CPU (PC 전체)' });
     const tpsNote = h('span.note');
     // 5초 간격 측정 → 점 개수로 시간 눈금을 만든다
     const minutesAgo = (n) => Math.max(1, Math.round(((n - 1) * 5) / 60));
@@ -531,7 +531,7 @@
       tpsNote.textContent = !on ? '서버 실행 시 표시' : tps === null ? '측정 중…' : tps >= 18 ? '쾌적' : tps >= 14 ? '조금 느림' : '과부하';
       const hist = state.history[s.id] || [];
       memChart.update(hist.map((p) => p.memoryMb));
-      memNote.textContent = `실제 사용량(GC 기준) · 할당 ${fmt.gb(cur.memoryMb)} · 최근 15분${on && m.processMb ? ` · Java 예약 ${fmt.gb(m.processMb)}` : ''}`;
+      memNote.textContent = `현재 힙 사용량 · 할당 ${fmt.gb(cur.memoryMb)} · 최근 15분${on && m.processMb ? ` · Java 예약 ${fmt.gb(m.processMb)}` : ''}`;
     };
 
     const players = s.players || [];

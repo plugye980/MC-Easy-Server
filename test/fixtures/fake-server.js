@@ -9,6 +9,8 @@ fs.writeFileSync('world/level.dat', 'level');
 setTimeout(() => log('Done (1.234s)! For help, type "help"'), 100);
 // 앱이 넘긴 -Xlog:gc 처럼 GC 로그를 남긴다 (실제 힙 사용량 측정 확인용)
 fs.mkdirSync('logs', { recursive: true });
+// 힙 측정 에이전트처럼 현재 사용량 파일도 남긴다 (에이전트 값이 GC 로그보다 우선)
+fs.writeFileSync('logs/mces-heap.txt', `${200 * 1048576} ${1024 * 1048576} ${1024 * 1048576} ${Date.now()}\n`);
 fs.appendFileSync('logs/mces-gc.log', '[0.9s] GC(0) Pause Young (Normal) (G1 Evacuation Pause) 300M->120M(1024M) 2.0ms\n');
 setTimeout(() => {
   log('UUID of player Steve is 069a79f4-44e9-4726-a5be-fca90e38aaf5');

@@ -119,6 +119,23 @@ function gcLogArgs(javaMajor) {
   return [`-Xloggc:${GC_LOG}`, '-XX:+PrintGC'];
 }
 
+// 현재 힙 사용량: 서버 JVM 안의 작은 에이전트(mces-agent.jar)가 2초마다 파일에 쓴다.
+// GC 로그는 GC 가 일어날 때만 기록되고(큰 힙에서는 드묾) GC 직후 값만 남으므로 보조로만 쓴다.
+const AGENT_JAR = 'mces-agent.jar';
+const HEAP_FILE = 'logs/mces-heap.txt';
+
+function agentArgs() {
+  return [`-javaagent:${AGENT_JAR}=${HEAP_FILE}`];
+}
+
+/** "사용 커밋 최대 시각(ms)" 한 줄. 오래된(15초 넘은) 값은 버린다 */
+function parseHeapFile(text, now = Date.now()) {
+  const m = /^(\d+) (\d+) (-?\d+) (\d+)\s*$/.exec(String(text));
+  if (!m) return null;
+  if (now - Number(m[4]) > 15000) return null;
+  return { usedMb: Math.round(Number(m[1]) / 1048576), committedMb: Math.round(Number(m[2]) / 1048576), maxMb: Number(m[3]) > 0 ? Math.round(Number(m[3]) / 1048576) : null };
+}
+
 const toMb = (n, unit) => {
   const v = Number(n);
   return unit === 'G' ? v * 1024 : unit === 'K' ? v / 1024 : unit === 'B' ? v / 1048576 : v;
@@ -146,4 +163,4 @@ function parseGcLog(text) {
 /** Fabric 서버에 기본으로 넣는 서버 최적화 모드 (Modrinth slug) */
 const FABRIC_OPTIMIZATION_MODS = ['fabric-api', 'lithium', 'ferrite-core'];
 
-module.exports = { GC_LOG, gcLogArgs, parseGcLog, aikarFlags, plainFlags, propertyDefaults, applyPaperConfigs, patchYaml, FABRIC_OPTIMIZATION_MODS, PAPER_WORLD };
+module.exports = { AGENT_JAR, HEAP_FILE, agentArgs, parseHeapFile, GC_LOG, gcLogArgs, parseGcLog, aikarFlags, plainFlags, propertyDefaults, applyPaperConfigs, patchYaml, FABRIC_OPTIMIZATION_MODS, PAPER_WORLD };
