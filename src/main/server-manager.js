@@ -1,4 +1,5 @@
 'use strict';
+const { StringDecoder } = require('string_decoder');
 // 서버 생성 · 실행 · 정지 · 삭제 · 업데이트, 접속자 · 성능 · 자동 백업
 const fs = require('fs');
 const path = require('path');
@@ -95,6 +96,38 @@ class Instance {
     this.waiters = [];
     this.startedAt = null;
   }
+}
+
+/** 이번 실행 중 생긴 Java 충돌 기록(hs_err_pid*.log)의 요약 */
+function findCrashReport(dir, since) {
+  try {
+    const files = fs
+      .readdirSync(dir)
+      .filter((f) => /^hs_err_pid\d+\.log$/.test(f))
+      .map((f) => ({ f, t: fs.statSync(path.join(dir, f)).mtimeMs }))
+      .filter((x) => !since || x.t >= since - 2000)
+      .sort((a, b) => b.t - a.t);
+    if (!files.length) return null;
+    const text = fs.readFileSync(path.join(dir, files[0].f), 'utf8');
+    // 머리말의 원인 부분만 (# 으로 시작하는 줄)
+    const lines = text.split(/\r?\n/).filter((l) => l.startsWith('#') && l.replace(/#/g, '').trim()).slice(0, 12);
+    return { file: files[0].f, lines };
+  } catch {
+    return null;
+  }
+}
+
+/** 종료 코드를 쉬운 말로. 모르면 null */
+function explainExit(code, { quiet, crash }) {
+  if (crash) return 'Java가 충돌로 종료 → 메모리를 낮추거나 최적화 옵션을 끄고 다시 실행. 계속되면 서버 폴더의 hs_err_pid 로그 확인';
+  // Windows NTSTATUS (부호 없는/있는 값 모두)
+  const u = code === null || code === undefined ? null : code >>> 0;
+  if (u === 0xc0000005) return 'Java 메모리 접근 오류(0xC0000005)로 종료 → 백신 프로그램 예외 등록 또는 최적화 옵션을 끄고 다시 실행';
+  if (u === 0xc0000409 || u === 0xc0000374) return 'Java가 비정상 종료 → 최적화 옵션을 끄고 다시 실행';
+  if (u === 0xc0000142 || u === 0xc0000135) return 'Java를 실행하지 못함 → 설정에서 Java를 다시 받기';
+  if (code === 137 || code === -9) return '운영체제가 서버를 강제 종료 (메모리 부족 가능) → 메모리를 낮춰 다시 실행';
+  if (quiet) return `출력 없이 종료 (코드 ${code}) → 백신 프로그램이 Java 실행을 막았는지 확인하거나 최적화 옵션을 끄고 다시 실행`;
+  return null;
 }
 
 class ServerManager extends EventEmitter {
@@ -275,19 +308,62 @@ class ServerManager extends EventEmitter {
       i.proc = proc;
       i.startedAt = Date.now();
 
-      let buf = '';
-      const onData = (chunk) => {
-        buf += chunk.toString('utf8');
-        const lines = buf.split(/\r?\n/);
-        buf = lines.pop();
-        for (const l of lines) this.onLine(id, l);
+      i.outputLines = 0;
+      // stdout/stderr 를 따로 모아 줄 단위로 넘긴다 (한 줄이 두 스트림에 섞이지 않게)
+      const reader = () => {
+        let buf = '';
+        const decoder = new StringDecoder('utf8');
+        return {
+          data: (chunk) => {
+            buf += decoder.write(chunk);
+            const lines = buf.split(/\r?\n/);
+            buf = lines.pop();
+            for (const l of lines) {
+              i.outputLines++;
+              this.onLine(id, l);
+            }
+          },
+          flush: () => {
+            buf += decoder.end();
+            if (buf.trim()) {
+              i.outputLines++;
+              this.onLine(id, buf);
+            }
+            buf = '';
+          },
+        };
       };
-      proc.stdout.on('data', onData);
-      proc.stderr.on('data', onData);
-      proc.on('error', (e) => this.log(id, `실행 실패: ${e.message}`, 'error'));
-      proc.on('exit', (code) => this.onExit(id, code));
+      const out = reader();
+      const err = reader();
+      proc.stdout.on('data', out.data);
+      proc.stderr.on('data', err.data);
+      let exited = false;
+      const finish = (code, signal) => {
+        if (exited) return;
+        exited = true;
+        out.flush();
+        err.flush();
+        this.onExit(id, code, signal);
+      };
+      proc.on('error', (e) => {
+        this.log(id, `Java 실행 실패: ${e.message}`, 'error');
+        // 실행 파일을 못 찾은 경우 등에는 close 가 오지 않을 수 있다
+        setTimeout(() => finish(null, null), 500);
+      });
+      // exit 는 출력이 다 읽히기 전에 올 수 있으므로 close 를 쓴다
+      proc.on('close', (code, signal) => finish(code, signal));
     } catch (e) {
       i.status = 'stopped';
+      i.proc = null;
+      this.log(id, `시작 실패: ${e.message}`, 'error');
+      this.emit('alert', {
+        serverId: id,
+        id: `start-failed-${Date.now()}`,
+        severity: 'error',
+        title: '서버 시작 실패',
+        message: e.message,
+        actions: [{ id: 'open-tab', label: '콘솔 보기', payload: { tab: 'console' } }],
+      });
       this.emitServer(id);
       throw e;
     }
@@ -446,9 +522,11 @@ class ServerManager extends EventEmitter {
     this.inst(id).metrics.tps = Math.round(tps * 10) / 10;
   }
 
-  async onExit(id, code) {
+  async onExit(id, code, signal = null) {
     const i = this.inst(id);
     const wasStopping = i.status === 'stopping';
+    const wasStarting = i.status === 'starting';
+    const startedAt = i.startedAt;
     i.timers.forEach(clearInterval);
     i.timers = [];
     i.proc = null;
@@ -459,15 +537,27 @@ class ServerManager extends EventEmitter {
     i.metrics.processMb = null;
     i.startedAt = null;
     try { pidusage.clear(); } catch { /* 무시 */ }
-    this.log(id, `■ 서버 종료 (종료 코드 ${code})`, 'app');
-    if (!wasStopping && code !== 0) {
+    this.log(id, `■ 서버 종료 (종료 코드 ${code === null ? (signal || '없음') : code})`, 'app');
+    if (!wasStopping && (code !== 0 || wasStarting)) {
+      // 아무것도 출력하지 않고 꺼졌으면 Java 충돌 기록(hs_err_pid*.log)이나 종료 코드로 원인을 짐작한다
+      const quiet = !i.outputLines;
+      const crash = findCrashReport(this.dir(id), startedAt);
+      if (crash) {
+        this.log(id, `Java 충돌 기록: ${crash.file}`, 'error');
+        for (const l of crash.lines) this.log(id, l, 'error');
+      }
+      const hint = explainExit(code, { quiet, crash: !!crash });
+      if (hint) this.log(id, hint, 'error');
       this.emit('alert', {
         serverId: id,
         id: `crash-${Date.now()}`,
         severity: 'error',
-        title: '서버 비정상 종료',
-        message: '위 안내 먼저 확인. 자세한 로그는 콘솔 탭',
-        actions: [{ id: 'open-tab', label: '콘솔 보기', payload: { tab: 'console' } }],
+        title: wasStarting ? '서버 시작 중 종료' : '서버 비정상 종료',
+        message: hint || '위 안내 먼저 확인. 자세한 로그는 콘솔 탭',
+        actions: [
+          { id: 'open-tab', label: '콘솔 보기', payload: { tab: 'console' } },
+          ...(crash || quiet ? [{ id: 'open-folder', label: '서버 폴더 열기' }] : []),
+        ],
       });
     }
     this.emitServer(id);
@@ -634,14 +724,14 @@ class ServerManager extends EventEmitter {
     };
     const list = [...(server.addons || []), ...modrinth.scanFolder(server, dir)];
     for (const a of list) {
-      if (a.projectId) continue;
+      // Modrinth 로 받은 파일도 안의 이름을 읽어야 의존성 이름(예: EssentialsX → "Essentials")과 맞춰 볼 수 있다
       if (!a.meta) {
         const file = locate(a.fileName);
         a.meta = file ? await addonMeta.inspect(file) : { kind: null, error: '파일 없음' };
-        if (a.meta.name) a.title = a.meta.name;
+        if (!a.projectId && a.meta.name) a.title = a.meta.name;
         if (a.meta.version && !a.versionNumber) a.versionNumber = a.meta.version;
       }
-      a.compat = addonMeta.compat(a.meta, server.type, server.version);
+      if (!a.projectId) a.compat = addonMeta.compat(a.meta, server.type, server.version);
     }
     const enabled = list.filter((a) => a.enabled);
     for (const a of list) a.missing = a.meta ? addonMeta.missingDependencies(a.meta, enabled) : [];
@@ -936,4 +1026,4 @@ class ServerManager extends EventEmitter {
   }
 }
 
-module.exports = { ServerManager, RE };
+module.exports = { explainExit, findCrashReport, ServerManager, RE };

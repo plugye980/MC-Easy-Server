@@ -3,6 +3,13 @@
 const fs = require('fs');
 const readline = require('readline');
 const log = (m) => process.stdout.write(`[12:00:00 INFO]: ${m}\n`);
+// 시작 중 종료 재현: quiet = 아무 출력 없이 종료, crash = Java 충돌 기록 + 줄바꿈 없는 마지막 출력
+if (process.env.MCES_FAKE_MODE === 'quiet') process.exit(3);
+if (process.env.MCES_FAKE_MODE === 'crash') {
+  fs.writeFileSync('hs_err_pid4242.log', '#\n# A fatal error has been detected by the Java Runtime Environment:\n#\n#  EXCEPTION_ACCESS_VIOLATION (0xc0000005)\n#\n---------------  S U M M A R Y ------------\n');
+  process.stdout.write('last words without newline', () => process.exit(1));
+  return;
+}
 log('Starting minecraft server version 1.21.1');
 fs.mkdirSync('world', { recursive: true });
 fs.writeFileSync('world/level.dat', 'level');

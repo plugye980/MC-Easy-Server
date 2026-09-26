@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const yazl = require('yazl');
 const { getJson, request, download, fileHash } = require('./http');
+const addonMeta = require('./addon-meta');
 
 const API = 'https://api.modrinth.com/v2';
 
@@ -72,16 +73,37 @@ async function project(idOrSlug) {
   return getJson(`${API}/project/${encodeURIComponent(idOrSlug)}`);
 }
 
-/** 현재 서버 버전·로더에 맞는 가장 최신 버전(정식 우선) */
-async function compatibleVersion(server, projectId, gameVersion = server.version) {
+/** 현재 서버 버전·로더로 표시된 버전들. 정식 먼저, 각각 최신순 */
+async function compatibleVersions(server, projectId, gameVersion = server.version) {
   const params = new URLSearchParams({
     loaders: JSON.stringify(loadersFor(server.type)),
     game_versions: JSON.stringify([gameVersion]),
   });
   const versions = await getJson(`${API}/project/${encodeURIComponent(projectId)}/version?${params}`);
-  if (!versions.length) return null;
-  return versions.find((v) => v.version_type === 'release') || versions[0];
+  const byDate = (a, b) => String(b.date_published || '').localeCompare(String(a.date_published || ''));
+  return [...versions.filter((v) => v.version_type === 'release').sort(byDate), ...versions.filter((v) => v.version_type !== 'release').sort(byDate)];
 }
+
+async function compatibleVersion(server, projectId, gameVersion = server.version) {
+  return (await compatibleVersions(server, projectId, gameVersion))[0] || null;
+}
+
+/**
+ * 받은 파일이 실제로 이 서버에서 돌 수 있는지. 제작자가 Modrinth에 예전 게임 버전까지 붙여 올린
+ * 최신 파일(더 높은 api-version, 더 높은 Java로 빌드)을 걸러낸다. 문제 없으면 null, 있으면 이유.
+ */
+async function fileProblem(server, file) {
+  if (server.type === 'vanilla') return null;
+  const meta = await addonMeta.inspect(file);
+  const c = addonMeta.compat(meta, server.type, server.version);
+  if (c.status === 'bad') return c.reason;
+  const java = await addonMeta.javaVersion(file);
+  if (java && server.javaMajor && java > server.javaMajor) return `Java ${java} 필요 (서버 Java ${server.javaMajor})`;
+  return null;
+}
+
+/** 파일을 받아 확인까지 하는 후보 수 (최신부터) */
+const MAX_TRIES = 6;
 
 function primaryFile(version) {
   return version.files.find((f) => f.primary) || version.files[0];
@@ -97,39 +119,67 @@ async function install(server, serverDir, projectId, onProgress = () => {}, ctx 
   if (ctx.visiting.has(projectId) && !top) return ctx;
   ctx.visiting.add(projectId);
 
-  const [meta, version] = await Promise.all([project(projectId), compatibleVersion(server, projectId)]);
-  if (!version) {
-    const reason = `${server.version} ${{ fabric: 'Fabric', forge: 'Forge', paper: 'Paper' }[server.type] || ''} 버전 없음`;
-    if (top) throw new Error(`"${meta.title}": 현재 서버와 맞는 파일 없음 (${reason.trim()})`);
+  const [meta, candidates] = await Promise.all([project(projectId), compatibleVersions(server, projectId)]);
+  const typeName = { fabric: 'Fabric', forge: 'Forge', paper: 'Paper' }[server.type] || '';
+  const fail = (reason) => {
+    if (top) throw new Error(`"${meta.title}": 현재 서버와 맞는 파일 없음 (${reason})`);
     ctx.skipped.push({ title: meta.title, reason });
     return ctx;
+  };
+  const noVersion = `${`${server.version} ${typeName}`.trim()} 버전 없음`;
+  if (!candidates.length) return fail(noVersion);
+
+  // 최신 후보부터 받아서 실제로 이 서버에서 돌 수 있는 첫 파일을 고른다
+  const folder = path.join(serverDir, addonFolder(server));
+  let version = null;
+  let file = null;
+  let tmp = null;
+  let lastProblem = null;
+  for (const v of candidates.slice(0, MAX_TRIES)) {
+    const f = primaryFile(v);
+    const t = path.join(folder, `${f.filename}.mces-download`);
+    onProgress({ text: `${meta.title} 받는 중`, percent: 0 });
+    await download(f.url, t, {
+      sha512: f.hashes.sha512,
+      onProgress: ({ received, total }) => onProgress({ text: `${meta.title} 받는 중`, percent: total ? received / total : 0 }),
+    });
+    const problem = await fileProblem(server, t);
+    if (!problem) {
+      version = v;
+      file = f;
+      tmp = t;
+      break;
+    }
+    lastProblem = `${v.version_number}: ${problem}`;
+    fs.rmSync(t, { force: true });
   }
+  if (!version) return fail(lastProblem || noVersion);
 
   // 의존성 먼저
-  for (const dep of version.dependencies || []) {
-    if (dep.dependency_type !== 'required') continue;
-    let depProject = dep.project_id;
-    if (!depProject && dep.version_id) {
+  try {
+    for (const dep of version.dependencies || []) {
+      if (dep.dependency_type !== 'required') continue;
+      let depProject = dep.project_id;
+      if (!depProject && dep.version_id) {
+        try {
+          depProject = (await getJson(`${API}/version/${dep.version_id}`)).project_id;
+        } catch { /* 무시 */ }
+      }
+      if (!depProject || ctx.visiting.has(depProject)) continue;
       try {
-        depProject = (await getJson(`${API}/version/${dep.version_id}`)).project_id;
-      } catch { /* 무시 */ }
+        await install(server, serverDir, depProject, onProgress, ctx);
+      } catch (e) {
+        ctx.skipped.push({ title: depProject, reason: e.message });
+      }
     }
-    if (!depProject || ctx.visiting.has(depProject)) continue;
-    try {
-      await install(server, serverDir, depProject, onProgress, ctx);
-    } catch (e) {
-      ctx.skipped.push({ title: depProject, reason: e.message });
-    }
+  } catch (e) {
+    fs.rmSync(tmp, { force: true });
+    throw e;
   }
 
-  const file = primaryFile(version);
-  const folder = path.join(serverDir, addonFolder(server));
   const dest = path.join(folder, file.filename);
-  onProgress({ text: `${meta.title} 설치 중`, percent: 0 });
-  await download(file.url, dest, {
-    sha512: file.hashes.sha512,
-    onProgress: ({ received, total }) => onProgress({ text: `${meta.title} 설치 중`, percent: total ? received / total : 0 }),
-  });
+  fs.renameSync(tmp, dest);
+  onProgress({ text: `${meta.title} 설치 완료`, percent: 1 });
   const addon = {
     projectId: meta.id,
     slug: meta.slug,
@@ -154,12 +204,57 @@ async function install(server, serverDir, projectId, onProgress = () => {}, ctx 
 }
 
 /** 이름으로 찾아 설치 (로그에서 "Vault가 필요해요" 같은 경우) */
+const normName = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+/** 이름이 필요한 이름과 얼마나 가까운지. 높을수록 먼저 시도 */
+function nameScore(hit, name) {
+  const n = normName(name);
+  const t = normName(hit.title);
+  const g = normName(hit.slug);
+  if (t === n || g === n) return 3;
+  // 흔한 포크 이름: EssentialsX(Essentials), VaultUnlocked(Vault), LuckPerms-Bukkit 등
+  if (t === `${n}x` || g === `${n}x` || t.startsWith(n) || g.startsWith(n)) return 2;
+  return 0;
+}
+
+/** 받은 파일 안의 이름(plugin.yml name, mod id)이 찾던 이름과 같은지 */
+function providesName(meta, name) {
+  if (!meta || (!meta.name && !meta.id)) return null; // 확인 불가
+  const n = normName(name);
+  return [meta.name, meta.id, ...(meta.provides || [])].some((x) => normName(x) === n);
+}
+
+/**
+ * 이름으로 찾아 설치 (로그에서 "Essentials 필요" 같은 경우).
+ * Modrinth 제목과 파일 속 이름이 다를 수 있으므로 받은 파일 안의 이름을 확인하고, 다르면 지우고 다음 후보를 시도한다.
+ */
 async function installByName(server, serverDir, name, onProgress) {
   const { hits } = await search(server, name, { limit: 10 });
   if (!hits.length) throw new Error(`Modrinth에서 "${name}" 찾기 실패`);
-  const norm = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
-  const hit = hits.find((h) => norm(h.title) === norm(name) || norm(h.slug) === norm(name)) || hits[0];
-  return install(server, serverDir, hit.projectId, onProgress);
+  const ranked = hits
+    .map((h, i) => ({ h, i, score: nameScore(h, name) }))
+    .sort((a, b) => b.score - a.score || (b.score ? b.h.downloads - a.h.downloads : a.i - b.i))
+    .map((x) => x.h);
+  const folder = path.join(serverDir, addonFolder(server));
+  const tried = [];
+  for (const hit of ranked.slice(0, 5)) {
+    const before = new Set(fs.existsSync(folder) ? fs.readdirSync(folder) : []);
+    let r;
+    try {
+      r = await install(server, serverDir, hit.projectId, onProgress);
+    } catch (e) {
+      tried.push(hit.title);
+      continue;
+    }
+    const top = r.installed[r.installed.length - 1];
+    if (server.type === 'vanilla' || !top) return r;
+    const meta = await addonMeta.inspect(path.join(folder, top.fileName));
+    if (providesName(meta, name) !== false) return r;
+    // 이름이 다른 플러그인이었다: 이번에 새로 받은 파일만 지운다
+    for (const a of r.installed) if (!before.has(a.fileName)) fs.rmSync(path.join(folder, a.fileName), { force: true });
+    tried.push(`${hit.title}(${meta.name || meta.id})`);
+  }
+  throw new Error(`Modrinth에서 "${name}" 을(를) 찾지 못함${tried.length ? ` — 확인한 후보: ${tried.join(', ')}` : ''}`);
 }
 
 /**
@@ -294,6 +389,10 @@ async function exportModsZip(server, serverDir, outFile, extraFiles = []) {
 
 module.exports = {
   loadersFor,
+  compatibleVersions,
+  fileProblem,
+  nameScore,
+  providesName,
   addonFolder,
   searchFacets,
   search,
