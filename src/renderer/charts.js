@@ -65,8 +65,13 @@
         root.setAttribute('viewBox', `0 0 ${W} ${H}`);
       }
       tag.setAttribute('y', 50);
-      const vals = values.map((v) => (v === null || v === undefined ? null : v));
-      const clean = vals.filter((v) => v !== null);
+      let vals = values.map((v) => (v === null || v === undefined ? null : v));
+      let clean = vals.filter((v) => v !== null);
+      // 첫 측정값 하나만 있어도 평평한 선으로 바로 보여준다
+      if (clean.length === 1) {
+        vals = [clean[0], clean[0]];
+        clean = vals;
+      }
       if (clean.length < 2) {
         for (const p of [face, shade, lit, line, nodes]) p.setAttribute('d', '');
         return;

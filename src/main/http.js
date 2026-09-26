@@ -64,7 +64,7 @@ async function download(url, dest, opts = {}) {
     const expected = String(opts[algo]).toLowerCase();
     if (digest !== expected) {
       fs.rmSync(tmp, { force: true });
-      throw new Error(`다운로드한 파일이 손상됐어요 (${path.basename(dest)} 해시 불일치). 다시 시도해 주세요.`);
+      throw new Error(`다운로드 파일 손상 (${path.basename(dest)} 해시 불일치) — 다시 시도`);
     }
   }
   fs.renameSync(tmp, dest);

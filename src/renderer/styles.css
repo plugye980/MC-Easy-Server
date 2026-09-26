@@ -124,7 +124,7 @@ p { margin: 0; line-height: 1.6; }
   box-shadow: var(--raise), 0 0 14px var(--sky-glow);
   display: grid; place-items: center;
 }
-.brand-mark::after { content: ""; width: 14px; height: 14px; border-radius: 3px; background: var(--page-b); box-shadow: inset 0 2px 3px var(--lo); }
+.brand-mark::after { content: ""; width: 22px; height: 22px; border-radius: 5px; background: var(--page-b); box-shadow: inset 0 2px 3px var(--lo); }
 .brand h1 { font-size: 1.05rem; filter: var(--lit-text-sm); }
 .brand .note { display: block; }
 
@@ -409,7 +409,7 @@ p { margin: 0; line-height: 1.6; }
 .type-card.on h3 { background-image: var(--grad-sky); }
 .type-card .type-ico { width: 30px; height: 30px; border-radius: 9px; background: var(--well-2); box-shadow: var(--inset-sm); display: grid; place-items: center; margin-bottom: 4px; }
 .type-card.on .type-ico { background: var(--sky); box-shadow: 0 0 12px var(--sky-glow); }
-.type-card .type-ico::after { content: ""; width: 10px; height: 10px; border-radius: 3px; background: var(--dim-b); }
+.type-card .type-ico::after { content: ""; width: 18px; height: 18px; border-radius: 5px; background: var(--dim-b); }
 .type-card.on .type-ico::after { background: var(--page-b); }
 
 .precheck { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }

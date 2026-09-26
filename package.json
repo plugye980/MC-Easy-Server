@@ -1,10 +1,10 @@
 {
   "name": "mc-easy-server",
-  "productName": "MC Easy Server",
+  "productName": "MCES",
   "version": "0.1.0",
   "description": "친구들끼리 쓰는 마인크래프트 서버 간편 설치·관리 앱 (Paper / Fabric / Vanilla)",
   "main": "src/main/main.js",
-  "author": "MC Easy Server",
+  "author": "MCES",
   "license": "MIT",
   "private": true,
   "scripts": {
@@ -16,8 +16,8 @@
     "dist:linux": "electron-builder --linux"
   },
   "build": {
-    "appId": "com.mceasyserver.app",
-    "productName": "MC Easy Server",
+    "appId": "com.mces.app",
+    "productName": "MCES",
     "files": [
       "src/**/*",
       "package.json"

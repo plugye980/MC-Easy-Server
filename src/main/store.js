@@ -40,7 +40,7 @@ const Servers = {
   },
   update(id, patch) {
     const s = this.get(id);
-    if (!s) throw new Error('서버를 찾을 수 없어요.');
+    if (!s) throw new Error('서버 없음');
     const next = typeof patch === 'function' ? patch(s) : { ...s, ...patch };
     return this.save(next);
   },

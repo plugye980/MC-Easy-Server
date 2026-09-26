@@ -33,7 +33,7 @@ function stamp(d = new Date()) {
 
 async function create(serverId, serverDir, levelName, reason = 'manual') {
   const dirs = worldDirs(serverDir, levelName);
-  if (!dirs.length) throw new Error('아직 백업할 월드가 없어요. 서버를 한 번 켜서 월드를 만든 뒤에 백업할 수 있어요.');
+  if (!dirs.length) throw new Error('백업할 월드 없음 — 서버를 한 번 실행해 월드를 만든 뒤 가능');
   const outDir = paths.serverBackups(serverId);
   fs.mkdirSync(outDir, { recursive: true });
   const file = path.join(outDir, `${stamp()}_${reason}.zip`);
@@ -82,7 +82,7 @@ function prune(serverId, keep) {
 async function restore(serverId, serverDir, levelName, file) {
   const safeDir = paths.serverBackups(serverId);
   const resolved = path.resolve(file);
-  if (!resolved.startsWith(path.resolve(safeDir) + path.sep)) throw new Error('이 앱의 백업 파일만 복원할 수 있어요.');
+  if (!resolved.startsWith(path.resolve(safeDir) + path.sep)) throw new Error('이 앱의 백업 파일만 복원 가능');
   // 되돌릴 수 있도록 현재 월드를 먼저 백업
   if (worldDirs(serverDir, levelName).length) await create(serverId, serverDir, levelName, 'before-restore');
   for (const d of worldDirs(serverDir, levelName)) fs.rmSync(path.join(serverDir, d), { recursive: true, force: true });

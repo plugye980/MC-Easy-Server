@@ -75,11 +75,11 @@ async function soap(service, action, args) {
 }
 
 /** 공유기에 포트를 연다. 성공하면 외부 주소를 돌려준다. */
-async function openPort(port, description = 'MC Easy Server') {
+async function openPort(port, description = 'MCES') {
   const service = await findService();
-  if (!service) throw new Error('UPnP를 지원하는 공유기를 찾지 못했어요. 공유기 설정에서 UPnP를 켜거나 터널(playit.gg)을 써 주세요.');
+  if (!service) throw new Error('UPnP 지원 공유기 없음 — 공유기 설정에서 UPnP를 켜거나 터널(playit.gg) 사용');
   const ip = localIp();
-  if (!ip) throw new Error('이 PC의 내부 IP를 찾지 못했어요.');
+  if (!ip) throw new Error('이 PC의 내부 IP 없음');
   for (const proto of ['TCP']) {
     await soap(service, 'AddPortMapping', {
       NewRemoteHost: '',

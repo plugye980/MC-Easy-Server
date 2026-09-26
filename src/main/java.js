@@ -104,7 +104,7 @@ async function install(feature, onProgress = () => {}) {
     } catch { assets = []; }
     if (assets.length) break;
   }
-  if (!assets.length) throw new Error(`이 PC(${os}/${arch})용 Java ${feature}를 찾지 못했어요.`);
+  if (!assets.length) throw new Error(`이 PC(${os}/${arch})용 Java ${feature} 없음`);
   const pkg = assets[0].binary.package;
   const archive = path.join(paths.cache(), pkg.name);
   onProgress({ stage: 'download', text: `Java ${feature} 내려받는 중`, percent: 0 });
@@ -124,7 +124,7 @@ async function install(feature, onProgress = () => {}) {
   fs.renameSync(tmp, dest);
   fs.rmSync(archive, { force: true });
   const bin = findJavaBinary(dest);
-  if (!bin) throw new Error('Java 압축을 풀었지만 실행 파일을 찾지 못했어요.');
+  if (!bin) throw new Error('Java 압축 해제 후 실행 파일 없음');
   if (process.platform !== 'win32') fs.chmodSync(bin, 0o755);
   return { major: feature, bin, managed: true };
 }
