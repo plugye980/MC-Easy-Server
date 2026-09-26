@@ -109,7 +109,41 @@ function applyPaperConfigs(serverDir) {
   return results.every(Boolean);
 }
 
+// ---------- 실제 힙 사용량 ----------
+// Aikar's flags 는 -Xms = -Xmx 와 AlwaysPreTouch 로 시작하자마자 힙 전체를 OS 에서 받아 둔다.
+// 그래서 프로세스 메모리(RSS)는 늘 할당량에 붙어 있다 → 실제 사용량은 GC 로그에서 읽는다.
+const GC_LOG = 'logs/mces-gc.log';
+
+function gcLogArgs(javaMajor) {
+  if (javaMajor >= 9) return [`-Xlog:gc:file=${GC_LOG}:uptime:filecount=0`];
+  return [`-Xloggc:${GC_LOG}`, '-XX:+PrintGC'];
+}
+
+const toMb = (n, unit) => {
+  const v = Number(n);
+  return unit === 'G' ? v * 1024 : unit === 'K' ? v / 1024 : unit === 'B' ? v / 1048576 : v;
+};
+
+/**
+ * GC 로그 마지막 기록에서 힙 사용량을 읽는다.
+ *   Java 9+: "[12.3s] GC(6) Pause Young (Normal) (G1 Evacuation Pause) 229M->81M(512M) 1.184ms"
+ *   Java 8:  "12.3: [GC pause (G1 Evacuation Pause) (young) 229M->81M(512M), 0.0012 secs]"
+ * @returns {{beforeMb:number, usedMb:number, committedMb:number}|null}
+ */
+function parseGcLog(text) {
+  const re = /(\d+(?:\.\d+)?)([BKMG])->(\d+(?:\.\d+)?)([BKMG])\((\d+(?:\.\d+)?)([BKMG])\)/g;
+  let m;
+  let last = null;
+  while ((m = re.exec(text))) last = m;
+  if (!last) return null;
+  return {
+    beforeMb: Math.round(toMb(last[1], last[2])),
+    usedMb: Math.round(toMb(last[3], last[4])),
+    committedMb: Math.round(toMb(last[5], last[6])),
+  };
+}
+
 /** Fabric 서버에 기본으로 넣는 서버 최적화 모드 (Modrinth slug) */
 const FABRIC_OPTIMIZATION_MODS = ['fabric-api', 'lithium', 'ferrite-core'];
 
-module.exports = { aikarFlags, plainFlags, propertyDefaults, applyPaperConfigs, patchYaml, FABRIC_OPTIMIZATION_MODS, PAPER_WORLD };
+module.exports = { GC_LOG, gcLogArgs, parseGcLog, aikarFlags, plainFlags, propertyDefaults, applyPaperConfigs, patchYaml, FABRIC_OPTIMIZATION_MODS, PAPER_WORLD };

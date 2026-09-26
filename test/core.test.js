@@ -68,6 +68,16 @@ test("Aikar's flags", () => {
   assert.strictEqual(f[0], '-XX:+IgnoreUnrecognizedVMOptions');
 });
 
+test('실제 힙 사용량은 GC 로그에서 읽는다 (RSS 는 AlwaysPreTouch 로 늘 최대)', () => {
+  assert.deepStrictEqual(optimize.gcLogArgs(21), ['-Xlog:gc:file=logs/mces-gc.log:uptime:filecount=0']);
+  assert.deepStrictEqual(optimize.gcLogArgs(8), ['-Xloggc:logs/mces-gc.log', '-XX:+PrintGC']);
+  const j21 = '[2.3s] GC(5) Concurrent Undo Cycle\n[2.7s] GC(6) Pause Young (Normal) (G1 Evacuation Pause) 229M->81M(512M) 1.184ms\n[3.1s] GC(7) Pause Young (Normal) (G1 Evacuation Pause) 1G->300M(6144M) 2.1ms\n';
+  assert.deepStrictEqual(optimize.parseGcLog(j21), { beforeMb: 1024, usedMb: 300, committedMb: 6144 });
+  const j8 = '12.3: [GC pause (G1 Evacuation Pause) (young) 204800K->51200K(1048576K), 0.0012 secs]';
+  assert.deepStrictEqual(optimize.parseGcLog(j8), { beforeMb: 200, usedMb: 50, committedMb: 1024 });
+  assert.strictEqual(optimize.parseGcLog('[0.01s] Using G1'), null);
+});
+
 test('Paper 설정은 생성된 파일에만 주석을 살려 덮어쓴다', () => {
   const dir = fs.mkdtempSync(path.join(tmp, 'paper-'));
   assert.strictEqual(optimize.applyPaperConfigs(dir), false);

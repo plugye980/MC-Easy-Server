@@ -114,7 +114,7 @@
       list.push(e.point);
       if (list.length > 180) list.shift();
       const s = state.servers.find((x) => x.id === e.serverId);
-      if (s) s.metrics = { tps: e.tps, memoryMb: e.memoryMb, cpu: e.cpu };
+      if (s) s.metrics = { tps: e.tps, memoryMb: e.memoryMb, processMb: e.processMb, cpu: e.cpu };
       if (e.serverId === state.selected && live.updateMetrics) live.updateMetrics();
     });
     mc.on('server:alert', (a) => {
@@ -524,13 +524,14 @@
       const on = cur.status === 'running';
       const tps = on && typeof m.tps === 'number' ? m.tps : null;
       tpsGauge.update(tps, tps === null ? '–' : tps.toFixed(1), tps >= 18 ? 'good' : tps >= 14 ? 'warn' : 'bad', '초당 틱');
-      const memPct = on ? ((m.memoryMb || 0) / cur.memoryMb) * 100 : null;
-      memGauge.update(memPct, on ? (m.memoryMb / 1024).toFixed(1) : '–', memPct > 95 ? 'warn' : 'good', `GB / ${fmt.gb(cur.memoryMb)}`);
+      const heap = on && typeof m.memoryMb === 'number' ? m.memoryMb : null;
+      const memPct = heap === null ? null : (heap / cur.memoryMb) * 100;
+      memGauge.update(memPct, heap === null ? '–' : (heap / 1024).toFixed(1), memPct > 90 ? 'warn' : 'good', heap === null ? (on ? '측정 중' : '') : `GB / ${fmt.gb(cur.memoryMb)}`);
       cpuGauge.update(on ? m.cpu || 0 : null, on ? String(m.cpu || 0) : '–', (m.cpu || 0) > 85 ? 'warn' : 'good', '%');
       tpsNote.textContent = !on ? '서버 실행 시 표시' : tps === null ? '측정 중…' : tps >= 18 ? '쾌적' : tps >= 14 ? '조금 느림' : '과부하';
       const hist = state.history[s.id] || [];
       memChart.update(hist.map((p) => p.memoryMb));
-      memNote.textContent = `할당 ${fmt.gb(cur.memoryMb)} 기준 · 최근 15분`;
+      memNote.textContent = `실제 사용량(GC 기준) · 할당 ${fmt.gb(cur.memoryMb)} · 최근 15분${on && m.processMb ? ` · Java 예약 ${fmt.gb(m.processMb)}` : ''}`;
     };
 
     const players = s.players || [];
@@ -1144,13 +1145,9 @@
     ['plains', '평원'], ['ocean', '바다'], ['deep_ocean', '깊은 바다'], ['warm_ocean', '따뜻한 바다'], ['desert', '사막'], ['forest', '숲'], ['taiga', '타이가'],
     ['snowy_plains', '눈 덮인 평원'], ['jungle', '정글'], ['savanna', '사바나'], ['swamp', '늪'], ['badlands', '악지'], ['mushroom_fields', '버섯 들판'], ['the_void', '공허'],
   ];
-  // 레이어는 아래층(기반암)부터
+  // 레이어는 아래층(기반암)부터 · 평지를 고르면 고전 평지에서 시작
   const FLAT_PRESETS = {
     classic: { label: '고전 평지', biome: 'plains', layers: [['bedrock', 1], ['dirt', 2], ['grass_block', 1]] },
-    water: { label: '물 세상', biome: 'plains', layers: [['bedrock', 1], ['water', 50]] },
-    ocean: { label: '바다 밑', biome: 'ocean', layers: [['bedrock', 1], ['stone', 5], ['sand', 3], ['water', 40]] },
-    desert: { label: '사막', biome: 'desert', layers: [['bedrock', 1], ['stone', 3], ['sandstone', 52], ['sand', 8]] },
-    void: { label: '공허', biome: 'the_void', layers: [['air', 1]] },
   };
   const presetLayers = (key) => FLAT_PRESETS[key].layers.map(([block, height]) => ({ block, height }));
   const defaultWorld = () => ({ source: 'new', type: 'normal', seed: '', structures: true, flat: { preset: 'classic', biome: 'plains', layers: presetLayers('classic') } });
@@ -1200,12 +1197,6 @@
         })),
         flat
           ? [
-              row('평지 모양', '예시를 고른 뒤 아래에서 층을 고칠 수 있음', seg([...Object.entries(FLAT_PRESETS).map(([value, p]) => ({ value, label: p.label })), { value: 'custom', label: '직접 설정', disabled: true }], w.flat.preset, (v) => {
-                w.flat.preset = v;
-                w.flat.biome = FLAT_PRESETS[v].biome;
-                w.flat.layers = presetLayers(v);
-                draw();
-              })),
               row('바이옴', '물 색·날씨·스폰되는 몹이 달라짐', select(BIOMES.map(([value, label]) => ({ value, label: `${label} (${value})` })), w.flat.biome, (v) => {
                 w.flat.biome = v;
                 w.flat.preset = 'custom';

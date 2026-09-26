@@ -87,7 +87,7 @@ class ServerManager extends EventEmitter {
       settings,
       status: i.status,
       players: [...i.players.values()],
-      metrics: { tps: i.metrics.tps, memoryMb: i.metrics.memoryMb, cpu: i.metrics.cpu },
+      metrics: { tps: i.metrics.tps, memoryMb: i.metrics.memoryMb, processMb: i.metrics.processMb, cpu: i.metrics.cpu },
       startedAt: i.startedAt,
     };
   }
@@ -225,7 +225,11 @@ class ServerManager extends EventEmitter {
         if (optimize.applyPaperConfigs(dir)) Servers.update(id, { optimizedApplied: true });
       }
       const flags = server.optimize ? optimize.aikarFlags(server.memoryMb) : optimize.plainFlags(server.memoryMb);
-      const args = [...flags, '-jar', 'server.jar', 'nogui'];
+      // 실제 힙 사용량을 읽기 위한 GC 로그 (이전 실행 기록은 지운다)
+      fs.mkdirSync(path.join(dir, 'logs'), { recursive: true });
+      fs.rmSync(path.join(dir, optimize.GC_LOG), { force: true });
+      i.metrics.memoryMb = null; // 첫 GC 전까지는 측정 중
+      const args = [...flags, ...optimize.gcLogArgs(rt.major || server.javaMajor), '-jar', 'server.jar', 'nogui'];
       this.log(id, `▶ ${path.basename(rt.bin)} ${args.join(' ')}`, 'app');
       const proc = spawn(rt.bin, args, { cwd: dir, windowsHide: true });
       i.proc = proc;
@@ -358,12 +362,35 @@ class ServerManager extends EventEmitter {
     }
     try {
       const u = await pidusage(i.proc.pid);
-      i.metrics.memoryMb = Math.round(u.memory / 1024 / 1024);
+      // 프로세스 메모리(RSS): -Xms=-Xmx · AlwaysPreTouch 때문에 늘 할당량 근처 → 참고용으로만
+      i.metrics.processMb = Math.round(u.memory / 1024 / 1024);
       i.metrics.cpu = Math.round(u.cpu);
     } catch { /* 종료 중 */ }
+    // 실제 힙 사용량: 마지막 GC 직후 남은 양(살아 있는 데이터)
+    const heap = this.readHeap(id);
+    if (heap) {
+      i.metrics.memoryMb = heap.usedMb;
+      i.metrics.heapBeforeMb = heap.beforeMb;
+    }
     i.metrics.history.push({ t: Date.now(), tps: i.metrics.tps, memoryMb: i.metrics.memoryMb, cpu: i.metrics.cpu });
     if (i.metrics.history.length > 180) i.metrics.history.shift();
     this.emit('metrics', { serverId: id, ...i.metrics, history: undefined, point: i.metrics.history[i.metrics.history.length - 1] });
+  }
+
+  /** GC 로그 끝부분만 읽어 마지막 힙 사용량을 얻는다 */
+  readHeap(id) {
+    const file = path.join(this.dir(id), optimize.GC_LOG);
+    try {
+      const size = fs.statSync(file).size;
+      const len = Math.min(size, 16384);
+      const fd = fs.openSync(file, 'r');
+      const buf = Buffer.alloc(len);
+      fs.readSync(fd, buf, 0, len, size - len);
+      fs.closeSync(fd);
+      return optimize.parseGcLog(buf.toString('utf8'));
+    } catch {
+      return null;
+    }
   }
 
   setTps(id, tps) {
@@ -379,7 +406,8 @@ class ServerManager extends EventEmitter {
     i.status = 'stopped';
     i.players.clear();
     i.metrics.tps = null;
-    i.metrics.memoryMb = 0;
+    i.metrics.memoryMb = null;
+    i.metrics.processMb = null;
     i.startedAt = null;
     try { pidusage.clear(); } catch { /* 무시 */ }
     this.log(id, `■ 서버 종료 (종료 코드 ${code})`, 'app');
