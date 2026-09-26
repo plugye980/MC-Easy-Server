@@ -7,6 +7,9 @@ log('Starting minecraft server version 1.21.1');
 fs.mkdirSync('world', { recursive: true });
 fs.writeFileSync('world/level.dat', 'level');
 setTimeout(() => log('Done (1.234s)! For help, type "help"'), 100);
+// 앱이 넘긴 -Xlog:gc 처럼 GC 로그를 남긴다 (실제 힙 사용량 측정 확인용)
+fs.mkdirSync('logs', { recursive: true });
+fs.appendFileSync('logs/mces-gc.log', '[0.9s] GC(0) Pause Young (Normal) (G1 Evacuation Pause) 300M->120M(1024M) 2.0ms\n');
 setTimeout(() => {
   log('UUID of player Steve is 069a79f4-44e9-4726-a5be-fca90e38aaf5');
   log('Steve joined the game');
