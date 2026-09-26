@@ -196,7 +196,14 @@ function registerIpc() {
     return address;
   });
   handle('tunnel:stop', () => tunnel.stop());
-  handle('tunnel:reset', () => tunnel.reset());
+  // 초기화: 저장된 연결과 함께 각 서버에 기록된 터널 주소도 지운다 (UPnP 주소는 그대로)
+  handle('tunnel:reset', () => {
+    tunnel.reset();
+    for (const s of Servers.all()) {
+      if (s.network && s.network.mode !== 'upnp' && s.network.address) manager.updateSettings(s.id, { network: { mode: 'tunnel', address: null } });
+    }
+    return true;
+  });
   handle('tunnel:setAddress', (id, address) => {
     tunnel.setAddress(id, address);
     return manager.updateSettings(id, { network: { address } });

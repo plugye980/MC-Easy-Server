@@ -196,41 +196,58 @@ class Tunnel extends EventEmitter {
     this.set({ agentId: data.agent_id });
     let t = pickTunnel(data, name) || pickTunnelByPort(data, server.port);
     if (!t && !(data.pending || []).some((p) => p.name === name)) {
-      const base = { name, tunnel_type: 'minecraft-java', port_type: 'tcp', port_count: 1, enabled: true, alloc: null, firewall_id: null, proxy_protocol: null };
-      // 로컬 포트를 지정할 수 있는 agent 방식 → 안 되면 예전 CLI가 쓰던 managed 방식
-      const origins = [
-        { type: 'agent', data: { agent_id: data.agent_id, local_ip: '127.0.0.1', local_port: Number(server.port) } },
-        { type: 'managed', data: { agent_id: data.agent_id } },
+      const port = Number(server.port);
+      // 1) 웹 대시보드와 같은 새 API (/v1/tunnels/create) — 로컬 주소는 에이전트 설정 필드로 넘긴다
+      // 2) 예전 API (/tunnels/create) — 옛 에이전트용
+      const requests = [
+        ['/v1/tunnels/create', {
+          name,
+          ports: { type: 'tunnel-type', details: 'minecraft-java' },
+          origin: { type: 'agent', data: { agent_id: data.agent_id, config: { fields: [{ name: 'local_ip', value: '127.0.0.1' }, { name: 'local_port', value: String(port) }] } } },
+          enabled: true,
+          alloc: null,
+          firewall_id: null,
+        }],
+        ['/tunnels/create', {
+          name, tunnel_type: 'minecraft-java', port_type: 'tcp', port_count: 1, enabled: true, alloc: null, firewall_id: null, proxy_protocol: null,
+          origin: { type: 'agent', data: { agent_id: data.agent_id, local_ip: '127.0.0.1', local_port: port } },
+        }],
       ];
       let created = false;
-      let lastError = null;
-      // 막 켠 에이전트는 새 버전으로 등록되기까지 몇 초 걸린다 → 그동안은 다시 시도
-      for (let attempt = 0; !created && attempt < 15; attempt++) {
-        if (attempt) await sleep(3000);
-        for (const origin of origins) {
+      const errors = [];
+      // 막 켠 에이전트는 등록되기까지 몇 초 걸린다 → 그 경우에만 잠깐 다시 시도
+      for (let attempt = 0; !created && attempt < 10; attempt++) {
+        if (attempt) {
+          this.set({ message: `에이전트 등록 대기 중 (${attempt}/9)` });
+          await sleep(3000);
+        }
+        errors.length = 0;
+        for (const [route, body] of requests) {
           try {
-            await this.api('/tunnels/create', { ...base, origin });
+            await this.api(route, body);
             created = true;
             break;
           } catch (e) {
-            lastError = e;
-            this.logLine(`tunnels/create(${origin.type}): ${e.message}`);
+            errors.push(`${route}: ${e.message}`);
+            this.logLine(`${route}: ${e.message}`);
           }
         }
-        if (!created && !/AgentVersionTooOld|AgentNotFound|retry/i.test(String(lastError && lastError.message))) break;
-        if (!created) this.set({ message: '에이전트 등록 대기 중' });
+        if (!created && !errors.some((m) => /AgentNotFound|AgentVersionTooOld|retry/i.test(m))) break;
       }
       if (!created) {
-        throw new Error(`playit 터널 자동 생성 실패 (${lastError && lastError.message}) — https://playit.gg/account/agents/${data.agent_id} 에서 Minecraft Java 터널 추가, 로컬 포트 ${server.port}`);
+        throw new Error(`playit 터널 자동 생성 실패 (${errors.join(' / ')}) — https://playit.gg/account/agents/${data.agent_id} 에서 Minecraft Java 터널 추가, 로컬 포트 ${server.port}`);
       }
     }
-    // 새 터널은 주소가 배정될 때까지 잠시 걸린다
-    for (let i = 0; !t && i < 30; i++) {
+    // 새 터널은 주소가 배정될 때까지 잠시 걸린다 (playit 이 알려주는 진행 상태를 그대로 보여준다)
+    for (let i = 0; !t && i < 40; i++) {
       await sleep(2000);
       data = await this.rundata();
-      t = pickTunnel(data, name);
+      t = pickTunnel(data, name) || pickTunnelByPort(data, server.port);
+      const pending = (data.pending || []).find((p) => p.name === name);
+      this.set({ message: pending && pending.status_msg ? `터널 준비 중 — ${pending.status_msg}` : '주소 배정 대기 중' });
     }
     if (!t) throw new Error(`터널 주소 배정 지연 — https://playit.gg/account/agents/${data.agent_id} 에서 확인`);
+    this.set({ message: null });
     const port = tunnelLocalPort(t);
     if (port && port !== Number(server.port)) {
       this.set({ message: `playit 터널이 ${port}번 포트로 연결됨 — playit.gg에서 로컬 포트를 ${server.port}로 변경 필요` });
@@ -248,7 +265,9 @@ class Tunnel extends EventEmitter {
       this.set({ status: 'connecting', message: '터널 연결 중' });
       if (!this.proc) this.spawnAgent();
       const address = await this.prepareServer(server);
-      this.set({ status: 'running', message: this.state.message === '터널 연결 중' ? null : this.state.message });
+      // 진행 중 문구는 지우고, 포트 불일치 같은 경고만 남긴다
+      const msg = this.state.message;
+      this.set({ status: 'running', message: msg && /변경 필요|꺼짐/.test(msg) ? msg : null });
       return address;
     } catch (e) {
       this.set({ status: 'error', message: e.message, claimUrl: null });
