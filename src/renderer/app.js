@@ -512,7 +512,6 @@
     const tpsGauge = Charts.gauge({ max: 20, label: 'TPS' });
     const memGauge = Charts.gauge({ max: 100, label: '메모리' });
     const cpuGauge = Charts.gauge({ max: 100, label: 'CPU' });
-    const tpsNote = h('span.note');
     // 5초 간격 측정 → 점 개수로 시간 눈금을 만든다
     const minutesAgo = (n) => Math.max(1, Math.round(((n - 1) * 5) / 60));
     const memChart = Charts.ridge({ max: s.memoryMb, tag: 'MEMORY', axis: (n) => (n > 12 ? [`${minutesAgo(n)}분 전`, `${Math.max(1, Math.round(minutesAgo(n) / 2))}분 전`] : ['방금', '']) });
@@ -528,7 +527,6 @@
       const memPct = heap === null ? null : (heap / cur.memoryMb) * 100;
       memGauge.update(memPct, heap === null ? '–' : (heap / 1024).toFixed(1), memPct > 90 ? 'warn' : 'good', heap === null ? (on ? '측정 중' : '') : `GB / ${fmt.gb(cur.memoryMb)}`);
       cpuGauge.update(on ? m.cpu || 0 : null, on ? String(m.cpu || 0) : '–', (m.cpu || 0) > 85 ? 'warn' : 'good', '%');
-      tpsNote.textContent = !on ? '서버 실행 시 표시' : tps === null ? '측정 중…' : tps >= 18 ? '쾌적' : tps >= 14 ? '조금 느림' : '과부하';
       const hist = state.history[s.id] || [];
       memChart.update(hist.map((p) => p.memoryMb));
       memNote.textContent = `현재 힙 사용량 · 할당 ${fmt.gb(cur.memoryMb)} · 최근 15분${on && m.processMb ? ` · Java 예약 ${fmt.gb(m.processMb)}` : ''}`;
@@ -544,7 +542,7 @@
         h(
           'div.card',
           null,
-          h('div.card-head', null, h('div', null, h('h2', null, '성능'), h('div.note', null, 'TPS 20에 가까울수록 렉 없음')), tpsNote),
+          h('div.card-head', null, h('h2', null, '성능')),
           h('div.gauges', null, tpsGauge, memGauge, cpuGauge),
         ),
         h('div.card', null, h('div.card-head', null, h('div', null, h('h2', null, '메모리 사용량'), memNote)), h('div.chart-well', null, memChart)),
