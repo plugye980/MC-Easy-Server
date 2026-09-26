@@ -32,11 +32,16 @@ function searchFacets(server) {
   return facets;
 }
 
-async function search(server, query, { offset = 0, limit = 20, index = 'relevance' } = {}) {
+const SORTS = ['relevance', 'downloads', 'follows', 'newest', 'updated'];
+
+/** index: relevance(관련도) · downloads(다운로드순) · updated(최근 업데이트) · newest(새로 올라온 순) */
+async function search(server, query, { offset = 0, limit = 20, index } = {}) {
+  // 검색어가 없으면 관련도 정렬이 의미 없으므로 다운로드순을 기본으로
+  const sort = SORTS.includes(index) ? index : query ? 'relevance' : 'downloads';
   const params = new URLSearchParams({
     query: query || '',
     facets: JSON.stringify(searchFacets(server)),
-    index: query ? index : 'downloads',
+    index: sort,
     offset: String(offset),
     limit: String(limit),
   });
@@ -44,6 +49,9 @@ async function search(server, query, { offset = 0, limit = 20, index = 'relevanc
   const installed = new Set((server.addons || []).map((a) => a.projectId));
   return {
     total: data.total_hits,
+    offset: data.offset,
+    limit: data.limit,
+    sort,
     hits: data.hits.map((h) => ({
       projectId: h.project_id,
       slug: h.slug,

@@ -131,6 +131,13 @@ test('로그 파싱 정규식', () => {
   assert.strictEqual(msg('[12:34:56] [Server thread/INFO]: Steve joined the game'), 'Steve joined the game');
   assert.strictEqual(msg('[12:34:56 INFO]: Steve left the game'), 'Steve left the game');
   assert.ok(RE.join.test('Steve joined the game'));
+  // 플러그인이 입장 문구를 바꾸거나 칭호를 붙여도 접속을 바로 잡는다
+  assert.strictEqual(RE.login.exec('Steve[/127.0.0.1:54321] logged in with entity id 123 at ([world]1.5, 64.0, 2.5)')[1], 'Steve');
+  assert.strictEqual(RE.join.exec('[관리자] Steve joined the game')[1], 'Steve');
+  assert.strictEqual(RE.lost.exec('Alex lost connection: Disconnected')[1], 'Alex');
+  assert.strictEqual(RE.leave.exec('[VIP] Alex left the game')[1], 'Alex');
+  assert.ok(RE.chat.test('<Steve> Bob joined the game'));
+  assert.ok(RE.chat.test('[Not Secure] <Steve> hi'));
   assert.ok(RE.done.test('Done (4.123s)! For help, type "help"'));
   assert.strictEqual(RE.tpsPaper.exec('TPS from last 1m, 5m, 15m: *20.0, 19.98, 19.9')[1], '20.0');
   assert.strictEqual(RE.mspt.exec('Average time per tick: 3.2ms (Target: 50.0ms)')[1], '3.2');

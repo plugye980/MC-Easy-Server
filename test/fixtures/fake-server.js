@@ -10,7 +10,11 @@ setTimeout(() => log('Done (1.234s)! For help, type "help"'), 100);
 setTimeout(() => {
   log('UUID of player Steve is 069a79f4-44e9-4726-a5be-fca90e38aaf5');
   log('Steve joined the game');
+  log('Alex[/127.0.0.1:50123] logged in with entity id 7 at ([world]0.5, 64.0, 0.5)');
+  log('[VIP] Alex joined the game');
+  log('<Steve> Bob joined the game');
 }, 250);
+setTimeout(() => log('Alex lost connection: Disconnected'), 600);
 const rl = readline.createInterface({ input: process.stdin });
 rl.on('line', (cmd) => {
   if (cmd === 'tps') log('TPS from last 1m, 5m, 15m: 19.5, 19.9, 20.0');

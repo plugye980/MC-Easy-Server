@@ -440,3 +440,15 @@ p { margin: 0; line-height: 1.6; }
 .empty-state .stack { align-items: center; max-width: 420px; }
 
 .hidden { display: none !important; }
+
+/* ---------- 검색 정렬 · 페이지 ---------- */
+.sort-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.sort-row .seg-item { min-height: 28px; padding: 4px 10px; font-size: 0.82rem; }
+.pager { display: flex; align-items: center; justify-content: center; gap: 6px; padding-top: 6px; }
+.pager:empty { display: none; }
+.pager-nums { display: flex; align-items: center; gap: 2px; }
+.pager-num { min-width: 32px; height: 30px; padding: 0 8px; border-radius: 9px; background: transparent; cursor: pointer; transition: background 0.18s var(--ease); }
+.pager-num:hover:not(.on) { background: var(--hover); }
+.pager-num.on { background: var(--well-2); box-shadow: var(--inset-sm); }
+.pager-num.on .txt { background-image: var(--grad-sky); font-weight: 500; }
+.pager-gap { padding: 0 4px; font-size: 0.82rem; }

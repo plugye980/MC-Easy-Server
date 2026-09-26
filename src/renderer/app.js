@@ -1,7 +1,7 @@
 'use strict';
 /* MCES — 한 화면에서 서버 추가 · 관리 (Docker Desktop처럼 왼쪽 목록 + 오른쪽 상세) */
 (function () {
-  const { h, $, fmt, button, seg, toggle, checkbox, slider, select, input, row, dot, progressBar, toast, modal, call } = window.UI;
+  const { h, $, append, fmt, button, seg, toggle, checkbox, slider, select, input, row, dot, progressBar, toast, modal, call } = window.UI;
   const Charts = window.Charts;
   // replaceChildren 은 null 을 "null" 글자로 넣으므로 빈 값은 걸러낸다
   const put = (el, ...kids) => el.replaceChildren(...kids.flat(Infinity).filter((k) => k !== null && k !== undefined && k !== false));
@@ -740,16 +740,57 @@
       );
     };
 
-    let query = '';
+    const PAGE = 20;
+    // Modrinth 는 offset + limit 이 10,000 을 넘으면 결과를 주지 않는다
+    const MAX_PAGES = Math.floor(10000 / PAGE);
+    const q = { query: '', sort: 'downloads', page: 0, seq: 0 };
     let timer = null;
+    const pager = h('div.pager');
+    const resultsCard = h('div.card');
+
+    const goPage = (p) => {
+      q.page = p;
+      doSearch();
+      resultsCard.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    };
+
+    const renderPager = (total) => {
+      const pages = Math.min(Math.ceil(total / PAGE), MAX_PAGES);
+      if (pages <= 1) return put(pager);
+      const cur = q.page;
+      // 처음 · 현재 주변 · 끝 번호만 보여준다 (예: 1 … 4 5 6 … 20)
+      const nums = [...new Set([0, cur - 2, cur - 1, cur, cur + 1, cur + 2, pages - 1])].filter((n) => n >= 0 && n < pages).sort((a, b) => a - b);
+      const items = [];
+      nums.forEach((n, i) => {
+        if (i && n - nums[i - 1] > 1) items.push(h('span.pager-gap.dim', null, '…'));
+        items.push(
+          h(
+            `button.pager-num${n === cur ? '.on' : ''}`,
+            { type: 'button', onclick: () => n !== cur && goPage(n), 'aria-current': n === cur ? 'page' : null, 'aria-label': `${n + 1}페이지` },
+            h('span.txt.num', null, String(n + 1)),
+          ),
+        );
+      });
+      put(
+        pager,
+        button('이전', () => goPage(cur - 1), { small: true, icon: '‹', disabled: cur === 0 }),
+        h('div.pager-nums', null, items),
+        button('다음', () => goPage(cur + 1), { small: true, icon: '›', disabled: cur >= pages - 1 }),
+      );
+    };
+
     const doSearch = async () => {
+      const seq = ++q.seq;
       resultNote.textContent = '찾는 중…';
-      const r = await call('addons:search', s.id, query, { limit: 20 });
+      const r = await call('addons:search', s.id, q.query, { limit: PAGE, offset: q.page * PAGE, index: q.sort });
+      if (seq !== q.seq) return; // 더 최근 검색이 있으면 버린다
       if (!r || r === true) {
         resultNote.textContent = '검색 실패';
         return;
       }
-      resultNote.textContent = `${s.version} · ${t.sub} 호환만 표시 · ${fmt.num(r.total)}개`;
+      const pages = Math.min(Math.ceil(r.total / PAGE), MAX_PAGES);
+      resultNote.textContent = `${s.version} · ${t.sub} 호환만 표시 · ${fmt.num(r.total)}개${pages > 1 ? ` · ${q.page + 1}/${pages}페이지` : ''}`;
+      renderPager(r.total);
       put(results, 
         ...(r.hits.length
           ? r.hits.map((hit) =>
@@ -781,8 +822,25 @@
       );
     };
 
+    const sortSeg = seg(
+      [
+        { value: 'downloads', label: '다운로드순' },
+        { value: 'relevance', label: '관련도순' },
+        { value: 'updated', label: '최근 업데이트' },
+        { value: 'newest', label: '최신 등록' },
+      ],
+      q.sort,
+      (v) => {
+        q.sort = v;
+        q.page = 0;
+        doSearch();
+      },
+      { name: '정렬' },
+    );
+
     const searchField = input('', (v) => {
-      query = v;
+      q.query = v;
+      q.page = 0;
       clearTimeout(timer);
       timer = setTimeout(doSearch, 350);
     }, { placeholder: `${t.addon} 이름으로 찾기 (예: ${s.type === 'paper' ? 'EssentialsX, LuckPerms' : s.type === 'fabric' ? 'Sodium, Lithium' : 'Vanilla Tweaks'})` });
@@ -820,7 +878,7 @@
         ),
         installed,
       ),
-      h('div.card', null, h('div.card-head', null, h('div', null, h('h2', null, 'Modrinth에서 찾기'), resultNote)), h('div.stack', null, searchField, progressBox, results)),
+      append(resultsCard, [h('div.card-head', null, h('div', null, h('h2', null, 'Modrinth에서 찾기'), resultNote)), h('div.stack', null, searchField, h('div.sort-row', null, h('span.note', null, '정렬'), sortSeg), progressBox, results, pager)]),
     );
   }
 
