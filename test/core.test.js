@@ -350,3 +350,20 @@ test('터널: 만든 뒤 대기(pending) 상태를 보여주고, 주소가 나�
   assert.strictEqual(t.state.message, null);
   assert.strictEqual(t.state.status, 'running');
 });
+
+test('예전 설치판 data 폴더를 새 위치로 옮긴다', () => {
+  const { migrateLegacy } = require('../src/main/paths');
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'mces-mig-'));
+  const from = path.join(base, 'app', 'data');
+  const to = path.join(base, 'local', 'MCES', 'data');
+  fs.mkdirSync(path.join(from, 'servers', 'a'), { recursive: true });
+  fs.writeFileSync(path.join(from, 'servers.json'), '[]');
+  migrateLegacy(from, to);
+  assert.ok(fs.existsSync(path.join(to, 'servers', 'a')));
+  assert.ok(!fs.existsSync(from));
+  // 새 위치에 이미 데이터가 있으면 건드리지 않는다
+  fs.mkdirSync(path.join(from, 'servers', 'b'), { recursive: true });
+  migrateLegacy(from, to);
+  assert.ok(fs.existsSync(path.join(from, 'servers', 'b')));
+  assert.ok(!fs.existsSync(path.join(to, 'servers', 'b')));
+});
