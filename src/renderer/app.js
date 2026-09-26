@@ -511,6 +511,7 @@
     const running = s.status === 'running';
     const tpsGauge = Charts.gauge({ max: 20, label: 'TPS' });
     const memGauge = Charts.gauge({ max: 100, label: '메모리' });
+    const tpsNote = h('span.note');
     const cpuGauge = Charts.gauge({ max: 100, label: 'CPU' });
     // 5초 간격 측정 → 점 개수로 시간 눈금을 만든다
     const minutesAgo = (n) => Math.max(1, Math.round(((n - 1) * 5) / 60));
@@ -522,6 +523,8 @@
       const m = cur.metrics || {};
       const on = cur.status === 'running';
       const tps = on && typeof m.tps === 'number' ? m.tps : null;
+      // 서버가 켜져 있을 때만 상태 문구 (꺼져 있으면 비움)
+      tpsNote.textContent = !on ? '' : tps === null ? '측정 중…' : tps >= 18 ? '쾌적' : tps >= 14 ? '조금 느림' : '과부하';
       tpsGauge.update(tps, tps === null ? '–' : tps.toFixed(1), tps >= 18 ? 'good' : tps >= 14 ? 'warn' : 'bad', '초당 틱');
       const heap = on && typeof m.memoryMb === 'number' ? m.memoryMb : null;
       const memPct = heap === null ? null : (heap / cur.memoryMb) * 100;
@@ -542,7 +545,7 @@
         h(
           'div.card',
           null,
-          h('div.card-head', null, h('h2', null, '성능')),
+          h('div.card-head', null, h('h2', null, '성능'), tpsNote),
           h('div.gauges', null, tpsGauge, memGauge, cpuGauge),
         ),
         h('div.card', null, h('div.card-head', null, h('div', null, h('h2', null, '메모리 사용량'), memNote)), h('div.chart-well', null, memChart)),
@@ -1082,7 +1085,7 @@
           h(
             'div.card',
             null,
-            h('div.card-head', null, h('h2', null, '성능')),
+            h('div.card-head', null, h('h2', null, '성능'), tpsNote),
             row('메모리', `PC 메모리 ${specs ? `${specs.totalGb}GB` : ''} 기준 추천값 표시`, mem),
             row('시야 거리', '줄이면 서버 부담 감소 (추천 8~10)', slider({ min: 3, max: 20, value: draft.viewDistance, onInput: set('viewDistance'), format: (v) => `${v}칸` })),
             row('시뮬레이션 거리', '작물·몹이 움직이는 거리 (추천 6~8)', slider({ min: 3, max: 16, value: draft.simulationDistance, onInput: set('simulationDistance'), format: (v) => `${v}칸` })),
