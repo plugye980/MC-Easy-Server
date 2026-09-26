@@ -77,3 +77,32 @@ test('켜기 → 준비 → 접속자/TPS → 백업 → 저장 후 정지', { s
   await until(() => backups.some((x) => x.backup && x.backup.reason === 'stop'));
   assert.strictEqual(alerts.filter((a) => a.severity === 'error').length, 0);
 });
+
+test('시작 중 조용히 꺼지면 원인 안내 (출력 없음 · Java 충돌 기록)', { skip: process.platform === 'win32' }, async () => {
+  const id = 'srv-quiet';
+  fs.mkdirSync(paths.serverDir(id), { recursive: true });
+  fs.writeFileSync(path.join(paths.serverDir(id), 'server.properties'), 'server-port=25998\n');
+  Servers.save({ id, name: 'q', type: 'paper', version: '1.21.1', javaMajor: 21, memoryMb: 1024, port: 25998, optimize: false, levelName: 'world', addons: [], backup: { enabled: false, keep: 5, onStop: false }, network: { mode: 'tunnel', address: null } });
+  const m = new ServerManager();
+  const alerts = [];
+  const lines = [];
+  m.on('alert', (a) => alerts.push(a));
+  m.on('console', (c) => lines.push(c.line));
+  try {
+    process.env.MCES_FAKE_MODE = 'quiet';
+    await m.start(id);
+    await until(() => alerts.length === 1);
+    assert.strictEqual(alerts[0].title, '서버 시작 중 종료');
+    assert.match(alerts[0].message, /출력 없이 종료 \(코드 3\)/);
+
+    process.env.MCES_FAKE_MODE = 'crash';
+    await m.start(id);
+    await until(() => alerts.length === 2);
+    assert.match(alerts[1].message, /Java가 충돌로 종료/);
+    // 줄바꿈 없는 마지막 출력도 콘솔에 남는다
+    assert.ok(lines.some((l) => l.includes('last words without newline')));
+    assert.ok(lines.some((l) => l.includes('EXCEPTION_ACCESS_VIOLATION')));
+  } finally {
+    delete process.env.MCES_FAKE_MODE;
+  }
+});

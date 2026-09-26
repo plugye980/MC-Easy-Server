@@ -352,6 +352,10 @@
       renderTab();
       return;
     }
+    if (action.id === 'open-folder') {
+      call('server:openFolder', serverId);
+      return;
+    }
     dismissAlert(serverId, alert.id);
     toast('처리하는 중…');
     const msg = await call('alert:action', serverId, action.id, action.payload || {});

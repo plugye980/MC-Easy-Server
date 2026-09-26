@@ -204,12 +204,57 @@ async function install(server, serverDir, projectId, onProgress = () => {}, ctx 
 }
 
 /** 이름으로 찾아 설치 (로그에서 "Vault가 필요해요" 같은 경우) */
+const normName = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+/** 이름이 필요한 이름과 얼마나 가까운지. 높을수록 먼저 시도 */
+function nameScore(hit, name) {
+  const n = normName(name);
+  const t = normName(hit.title);
+  const g = normName(hit.slug);
+  if (t === n || g === n) return 3;
+  // 흔한 포크 이름: EssentialsX(Essentials), VaultUnlocked(Vault), LuckPerms-Bukkit 등
+  if (t === `${n}x` || g === `${n}x` || t.startsWith(n) || g.startsWith(n)) return 2;
+  return 0;
+}
+
+/** 받은 파일 안의 이름(plugin.yml name, mod id)이 찾던 이름과 같은지 */
+function providesName(meta, name) {
+  if (!meta || (!meta.name && !meta.id)) return null; // 확인 불가
+  const n = normName(name);
+  return [meta.name, meta.id, ...(meta.provides || [])].some((x) => normName(x) === n);
+}
+
+/**
+ * 이름으로 찾아 설치 (로그에서 "Essentials 필요" 같은 경우).
+ * Modrinth 제목과 파일 속 이름이 다를 수 있으므로 받은 파일 안의 이름을 확인하고, 다르면 지우고 다음 후보를 시도한다.
+ */
 async function installByName(server, serverDir, name, onProgress) {
   const { hits } = await search(server, name, { limit: 10 });
   if (!hits.length) throw new Error(`Modrinth에서 "${name}" 찾기 실패`);
-  const norm = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
-  const hit = hits.find((h) => norm(h.title) === norm(name) || norm(h.slug) === norm(name)) || hits[0];
-  return install(server, serverDir, hit.projectId, onProgress);
+  const ranked = hits
+    .map((h, i) => ({ h, i, score: nameScore(h, name) }))
+    .sort((a, b) => b.score - a.score || (b.score ? b.h.downloads - a.h.downloads : a.i - b.i))
+    .map((x) => x.h);
+  const folder = path.join(serverDir, addonFolder(server));
+  const tried = [];
+  for (const hit of ranked.slice(0, 5)) {
+    const before = new Set(fs.existsSync(folder) ? fs.readdirSync(folder) : []);
+    let r;
+    try {
+      r = await install(server, serverDir, hit.projectId, onProgress);
+    } catch (e) {
+      tried.push(hit.title);
+      continue;
+    }
+    const top = r.installed[r.installed.length - 1];
+    if (server.type === 'vanilla' || !top) return r;
+    const meta = await addonMeta.inspect(path.join(folder, top.fileName));
+    if (providesName(meta, name) !== false) return r;
+    // 이름이 다른 플러그인이었다: 이번에 새로 받은 파일만 지운다
+    for (const a of r.installed) if (!before.has(a.fileName)) fs.rmSync(path.join(folder, a.fileName), { force: true });
+    tried.push(`${hit.title}(${meta.name || meta.id})`);
+  }
+  throw new Error(`Modrinth에서 "${name}" 을(를) 찾지 못함${tried.length ? ` — 확인한 후보: ${tried.join(', ')}` : ''}`);
 }
 
 /**
@@ -346,6 +391,8 @@ module.exports = {
   loadersFor,
   compatibleVersions,
   fileProblem,
+  nameScore,
+  providesName,
   addonFolder,
   searchFacets,
   search,
