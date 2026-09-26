@@ -116,6 +116,8 @@ function registerIpc() {
   handle('server:console', (id) => manager.consoleLines(id));
   handle('server:history', (id) => manager.history(id));
   handle('server:settings', (id, patch) => manager.updateSettings(id, patch));
+  handle('server:gameRules', (id) => manager.gameRules(id));
+  handle('server:setGameRules', (id, changes) => manager.setGameRules(id, changes));
   handle('server:openFolder', (id) => shell.openPath(manager.dir(id)));
   handle('server:checkUpdate', (id, v) => manager.checkUpdate(id, v));
   handle('server:applyUpdate', (id, v) => manager.applyUpdate(id, v, progressTo(`update-${id}`)));

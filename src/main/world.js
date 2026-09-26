@@ -132,6 +132,106 @@ function readNbtVersion(buf) {
   return { version: found['/Data/Version/Name'] || null, dataVersion: found['/Data/DataVersion'] || null, levelName: found['/Data/LevelName'] || null };
 }
 
+// ---------- NBT 전체 읽기 (게임 규칙용) ----------
+/** NBT 를 {t: 태그 종류, v: 값} 트리로 읽는다. 압축 여부는 자동 판단 */
+function parseNbt(buf) {
+  let data = buf;
+  try {
+    data = zlib.gunzipSync(buf);
+  } catch { /* 압축 안 된 NBT */ }
+  let pos = 0;
+  const str = () => {
+    const n = data.readUInt16BE(pos);
+    pos += 2;
+    const s = data.toString('utf8', pos, pos + n);
+    pos += n;
+    return s;
+  };
+  const payload = (t) => {
+    switch (t) {
+      case 1: { const v = data.readInt8(pos); pos += 1; return v; }
+      case 2: { const v = data.readInt16BE(pos); pos += 2; return v; }
+      case 3: { const v = data.readInt32BE(pos); pos += 4; return v; }
+      case 4: { const v = Number(data.readBigInt64BE(pos)); pos += 8; return v; }
+      case 5: { const v = data.readFloatBE(pos); pos += 4; return v; }
+      case 6: { const v = data.readDoubleBE(pos); pos += 8; return v; }
+      case 7: { const n = data.readInt32BE(pos); pos += 4 + n; return null; }
+      case 8: return str();
+      case 9: {
+        const et = data[pos++];
+        const n = data.readInt32BE(pos);
+        pos += 4;
+        const out = [];
+        for (let i = 0; i < n; i++) out.push({ t: et, v: payload(et) });
+        return out;
+      }
+      case 10: {
+        const out = {};
+        for (;;) {
+          const ct = data[pos++];
+          if (ct === 0) return out;
+          const name = str();
+          out[name] = { t: ct, v: payload(ct) };
+        }
+      }
+      case 11: { const n = data.readInt32BE(pos); pos += 4 + n * 4; return null; }
+      case 12: { const n = data.readInt32BE(pos); pos += 4 + n * 8; return null; }
+      default: throw new Error(`NBT tag ${t}`);
+    }
+  };
+  const t = data[pos++];
+  if (t !== 10) throw new Error('NBT 형식 아님');
+  str();
+  return { t: 10, v: payload(10) };
+}
+
+/** 트리에서 이름이 GameRules / game_rules 인 묶음을 찾는다 */
+function findRules(node, depth = 0) {
+  if (!node || node.t !== 10 || depth > 4) return null;
+  for (const [k, c] of Object.entries(node.v)) {
+    if (c.t === 10 && /^(minecraft:)?game_?rules$/i.test(k)) return c;
+  }
+  for (const c of Object.values(node.v)) {
+    const r = findRules(c, depth + 1);
+    if (r) return r;
+  }
+  return null;
+}
+
+/**
+ * 월드에 저장된 게임 규칙. 버전마다 이름(keepInventory / keep_inventory)과 저장 방식이 달라서
+ * 파일에 적힌 이름과 값을 그대로 돌려준다. 월드가 없으면 null.
+ * @returns {{rules: {[key: string]: {value: boolean|number, kind: 'bool'|'int'}}, mtime: number} | null}
+ */
+function readGameRules(worldDir) {
+  const files = [path.join(worldDir, 'level.dat')];
+  // 새 버전은 규칙을 data/ 아래 따로 둘 수 있다
+  try {
+    for (const f of fs.readdirSync(path.join(worldDir, 'data'))) if (/game_?rules.*\.dat$/i.test(f)) files.push(path.join(worldDir, 'data', f));
+  } catch { /* 없음 */ }
+  for (const file of files) {
+    let tree;
+    try {
+      tree = parseNbt(fs.readFileSync(file));
+    } catch {
+      continue;
+    }
+    // 파일 전체가 규칙 묶음일 수도 있다 (data/…game_rules.dat 의 "data" 묶음)
+    const node = findRules(tree) || (file.endsWith('level.dat') ? null : tree.v.data || null);
+    if (!node || node.t !== 10) continue;
+    const rules = {};
+    for (const [k, c] of Object.entries(node.v)) {
+      if (c.t === 8) {
+        if (c.v === 'true' || c.v === 'false') rules[k] = { value: c.v === 'true', kind: 'bool' };
+        else if (/^-?\d+$/.test(c.v)) rules[k] = { value: Number(c.v), kind: 'int' };
+      } else if (c.t === 1) rules[k] = { value: c.v !== 0, kind: 'bool' };
+      else if (c.t === 3 || c.t === 2) rules[k] = { value: c.v, kind: 'int' };
+    }
+    if (Object.keys(rules).length) return { rules, mtime: fs.statSync(file).mtimeMs };
+  }
+  return null;
+}
+
 function worldInfoAt(dir) {
   const file = path.join(dir, 'level.dat');
   if (!fs.existsSync(file)) return null;
@@ -203,4 +303,4 @@ function deleteWorld(serverDir, levelName) {
   for (const d of [levelName, `${levelName}_nether`, `${levelName}_the_end`]) fs.rmSync(path.join(serverDir, d), { recursive: true, force: true });
 }
 
-module.exports = { TYPES, levelTypeValue, levelTypeFromValue, validateFlat, flatGenerator, toProperties, fromProperties, readNbtVersion, worldInfoAt, inspectSource, importInto, deleteWorld, MAX_HEIGHT };
+module.exports = { parseNbt, readGameRules, TYPES, levelTypeValue, levelTypeFromValue, validateFlat, flatGenerator, toProperties, fromProperties, readNbtVersion, worldInfoAt, inspectSource, importInto, deleteWorld, MAX_HEIGHT };

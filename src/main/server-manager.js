@@ -19,6 +19,7 @@ const modrinth = require('./modrinth');
 const addonMeta = require('./addon-meta');
 const world = require('./world');
 const serverImport = require('./server-import');
+const gamerules = require('./gamerules');
 const forge = require('./forge');
 const { fileHash } = require('./http');
 const backup = require('./backup');
@@ -469,6 +470,7 @@ class ServerManager extends EventEmitter {
       }
       Servers.update(id, { pendingCommands: undefined });
     }
+    if (server.pendingRules) this.flushPendingRules(id);
     // Paper 설정 파일은 첫 실행 때 생기므로, 생긴 직후 최적값을 넣어 다음 실행부터 적용한다
     if (server.type === 'paper' && server.optimize && !server.optimizedApplied) {
       if (optimize.applyPaperConfigs(this.dir(id))) {
@@ -606,17 +608,21 @@ class ServerManager extends EventEmitter {
     i.status = 'stopping';
     this.emitServer(id);
     return new Promise((resolve) => {
-      i.exitResolvers = [...(i.exitResolvers || []), resolve];
-      try {
-        i.proc.stdin.write('stop\n');
-      } catch { /* 이미 닫힘 */ }
       const proc = i.proc;
-      setTimeout(() => {
+      // 정상 종료되면 강제 종료 타이머를 치운다
+      const timer = setTimeout(() => {
         if (i.proc === proc) {
           this.log(id, '제한 시간 초과 — 강제 종료', 'error');
           proc.kill('SIGKILL');
         }
       }, timeout);
+      i.exitResolvers = [...(i.exitResolvers || []), () => {
+        clearTimeout(timer);
+        resolve();
+      }];
+      try {
+        i.proc.stdin.write('stop\n');
+      } catch { /* 이미 닫힘 */ }
     });
   }
 
@@ -701,7 +707,23 @@ class ServerManager extends EventEmitter {
     if (next.memoryMb !== server.memoryMb) restart.push(SETTING_LABELS.memoryMb);
     if (next.optimize !== server.optimize) restart.push(SETTING_LABELS.optimize);
     const pending = { ...(server.pendingCommands || {}) };
+    // 1.21.9 이후 PVP·커맨드 블록은 server.properties 가 아니라 게임 규칙이다
+    const saved = world.readGameRules(path.join(this.dir(id), server.levelName || 'world'));
+    const pendingRules = { ...(server.pendingRules || {}) };
+    const overrides = { ...(server.ruleOverrides || {}) };
+    const ruleChanges = [];
     for (const k of changed) {
+      const ruleKey = gamerules.PROPERTY_RULES[k] && saved ? gamerules.findKey(Object.keys(saved.rules), gamerules.PROPERTY_RULES[k]) : null;
+      if (!ruleKey) continue;
+      ruleChanges.push(k);
+      if (running) {
+        this.command(id, gamerules.command(ruleKey, !!friendly[k]));
+        overrides[ruleKey] = { value: !!friendly[k], at: Date.now() };
+      } else pendingRules[ruleKey] = !!friendly[k];
+      now.push(SETTING_LABELS[k]);
+    }
+    for (const k of changed) {
+      if (ruleChanges.includes(k)) continue;
       const cmd = LIVE_SETTINGS[k] && LIVE_SETTINGS[k](friendly[k]);
       if (cmd && running) {
         this.command(id, cmd);
@@ -721,6 +743,8 @@ class ServerManager extends EventEmitter {
       now.push(...restart.splice(0));
     }
     next.pendingCommands = Object.keys(pending).length ? pending : undefined;
+    next.pendingRules = Object.keys(pendingRules).length ? pendingRules : undefined;
+    next.ruleOverrides = Object.keys(overrides).length ? overrides : undefined;
     Servers.save(next);
     const values = props.toProperties(friendly);
     if (Object.keys(values).length) {
@@ -731,6 +755,71 @@ class ServerManager extends EventEmitter {
     if (bk) this.scheduleBackup(id);
     this.emitServer(id);
     return { ...this.get(id), applied: { now, restart, running } };
+  }
+
+  // ---------- 게임 규칙 (gamerule) ----------
+  /** 월드에 저장된 규칙 + 앱에서 바꾼 값(아직 저장 전이거나 다음 실행 때 적용할 값) */
+  gameRules(id) {
+    const server = Servers.get(id);
+    const saved = world.readGameRules(path.join(this.dir(id), server.levelName || 'world'));
+    const running = this.inst(id).status === 'running';
+    if (!saved) return { available: false, running };
+    const rules = { ...saved.rules };
+    // 켜진 서버에서 바꾼 값은 서버가 월드를 저장하기 전까지 파일에 없다
+    for (const [k, o] of Object.entries(server.ruleOverrides || {})) if (rules[k] && o.at > saved.mtime) rules[k] = { ...rules[k], value: o.value };
+    const pending = server.pendingRules || {};
+    for (const [k, v] of Object.entries(pending)) if (rules[k]) rules[k] = { ...rules[k], value: v };
+    const { common, other } = gamerules.describe(rules);
+    const mark = (r) => ({ ...r, pending: r.key in pending });
+    return { available: true, running, common: common.map(mark), other: other.map(mark) };
+  }
+
+  /**
+   * 규칙 바꾸기. 켜져 있으면 gamerule 명령으로 바로, 꺼져 있으면 다음 실행 때 적용한다.
+   * @param {{[key: string]: boolean|number}} changes 파일에 적힌 규칙 이름 → 값
+   */
+  setGameRules(id, changes) {
+    const server = Servers.get(id);
+    const saved = world.readGameRules(path.join(this.dir(id), server.levelName || 'world'));
+    if (!saved) throw new Error('월드가 아직 없음 — 서버를 한 번 켠 뒤 설정 가능');
+    const running = this.inst(id).status === 'running';
+    const pendingRules = { ...(server.pendingRules || {}) };
+    const overrides = { ...(server.ruleOverrides || {}) };
+    const labels = [];
+    const { common, other } = gamerules.describe(saved.rules);
+    const labelOf = new Map([...common, ...other].map((r) => [r.key, r.label]));
+    for (const [key, raw] of Object.entries(changes || {})) {
+      const rule = saved.rules[key];
+      if (!rule) continue;
+      const value = rule.kind === 'bool' ? !!raw : Math.trunc(Number(raw));
+      if (rule.kind === 'int' && !Number.isFinite(value)) continue;
+      const cmd = gamerules.command(key, value);
+      if (running) {
+        this.command(id, cmd);
+        overrides[key] = { value, at: Date.now() };
+        delete pendingRules[key];
+      } else if (value === rule.value) delete pendingRules[key];
+      else pendingRules[key] = value;
+      labels.push(labelOf.get(key) || key);
+    }
+    Servers.update(id, {
+      pendingRules: Object.keys(pendingRules).length ? pendingRules : undefined,
+      ruleOverrides: Object.keys(overrides).length ? overrides : undefined,
+    });
+    return { running, changed: labels };
+  }
+
+  /** 꺼져 있을 때 바꾼 규칙을 켜진 뒤 명령으로 적용 */
+  flushPendingRules(id) {
+    const server = Servers.get(id);
+    const overrides = { ...(server.ruleOverrides || {}) };
+    for (const [key, value] of Object.entries(server.pendingRules || {})) {
+      try {
+        this.command(id, gamerules.command(key, value));
+        overrides[key] = { value, at: Date.now() };
+      } catch { /* 무시 */ }
+    }
+    Servers.update(id, { pendingRules: undefined, ruleOverrides: overrides });
   }
 
   // ---------- 삭제 ----------
