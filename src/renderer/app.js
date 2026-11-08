@@ -138,6 +138,7 @@
       const s = state.servers.find((x) => x.id === e.serverId);
       if (s) s.metrics = { tps: e.tps, memoryMb: e.memoryMb, processMb: e.processMb, cpu: e.cpu };
       if (e.serverId === state.selected && live.updateMetrics) live.updateMetrics();
+      if (e.serverId === state.selected && live.updateStats) live.updateStats();
     });
     mc.on('server:alert', (a) => {
       const list = (state.alerts[a.serverId] = state.alerts[a.serverId] || []);
@@ -154,6 +155,7 @@
     });
     mc.on('tunnel:state', (t) => {
       state.tunnel = t;
+      renderBand();
       if (state.selected && state.selected !== 'new') renderAddress();
     });
     mc.on('progress', (p) => {
@@ -184,94 +186,70 @@
   }
 
   function renderSide() {
-    const list = h(
-      'div.server-list',
-      null,
-      state.servers.length
-        ? state.servers.map((s, i) =>
-            h(
-              `button.srv${s.id === state.selected ? '.on' : ''}`,
-              { type: 'button', onclick: () => selectServer(s.id) },
-              h('span.srv-code', null, String(i + 1).padStart(2, '0')),
-              h(
-                'span',
-                { style: { minWidth: 0 } },
-                h('span.srv-name.txt', null, s.name),
-                h('span.srv-meta.note', null, dot(STATUS[s.status].dot), `${TYPE[s.type].sub} ${s.version}${s.status === 'running' ? ` · ${s.players.length}명` : ''}`),
-              ),
-              s.status === 'running' && s.metrics && typeof s.metrics.tps === 'number' ? h('span.srv-tps.num', { title: 'TPS' }, s.metrics.tps.toFixed(1)) : null,
-            ),
-          )
-        : h('span.empty.note', null, '서버 없음'),
-    );
-    const side = $('#side');
-    put(side,
+    renderBrand();
+    const items = state.servers.map((s, i) =>
       h(
-        'div.brand',
-        null,
-        typeMark(brandType(), '.brand-mark'),
-        h('div.brand-text', null, h('span.brand-word', null, 'MCES'), h('span.brand-sub', null, 'SCRF · SECTOR A')),
-      ),
-      h(
-        'div.side-section',
-        { style: { flex: '1', minHeight: 0 } },
-        h('div.side-head', null, h('span.label', null, '내 서버'), h('span.side-count', null, String(state.servers.length).padStart(2, '0'))),
-        list,
+        `button.nav-item${s.id === state.selected ? '.is-on' : ''}`,
+        { type: 'button', onclick: () => selectServer(s.id) },
+        h('b', null, String(i + 1).padStart(2, '0')),
         h(
-          `button.srv-new${state.selected === 'new' ? '.on' : ''}`,
-          { type: 'button', onclick: () => selectServer('new') },
-          h('span.srv-new-mark', { 'aria-hidden': 'true' }, '+'),
-          h('span.txt', null, '새 서버 만들기'),
+          'span.nav-body',
+          null,
+          h('span.nav-name', null, s.name),
+          h('span.nav-meta', null, dot(STATUS[s.status].dot), `${TYPE[s.type].sub} ${s.version}${s.status === 'running' ? ` · ${s.players.length}명` : ''}`),
         ),
-      ),
-      h(
-        'div.side-foot',
-        null,
-        seg(
-          [
-            { value: 'light', label: '밝게' },
-            { value: 'dark', label: '어둡게' },
-          ],
-          state.settings.theme,
-          async (theme) => {
-            applyTheme(theme);
-            state.settings = (await call('app:setSettings', { theme })) || state.settings;
-            if (live.updateMetrics) live.updateMetrics();
-          },
-          { name: '테마' },
-        ),
+        s.status === 'running' && s.metrics && typeof s.metrics.tps === 'number' ? h('span.nav-tps', { title: 'TPS' }, s.metrics.tps.toFixed(1)) : null,
       ),
     );
-    side.querySelector('.side-foot .seg').classList.add('seg-wide');
-    renderSysbar();
+    put($('#side'),
+      ...items,
+      h(
+        `button.nav-item.nav-new${state.selected === 'new' ? '.is-on' : ''}`,
+        { type: 'button', onclick: () => selectServer('new') },
+        h('b', null, '+'),
+        h('span.nav-body', null, h('span.nav-name', null, '새 서버'), h('span.nav-meta', null, '만들기 · 기존 서버 가져오기')),
+      ),
+    );
+    put($('#paneFoot'),
+      h('span.foot-code', null, 'MCES · SCRF/SECTOR A'),
+      seg(
+        [
+          { value: 'light', label: '밝게' },
+          { value: 'dark', label: '어둡게' },
+        ],
+        state.settings.theme,
+        async (theme) => {
+          applyTheme(theme);
+          state.settings = (await call('app:setSettings', { theme })) || state.settings;
+          if (live.updateMetrics) live.updateMetrics();
+        },
+        { name: '테마' },
+      ),
+    );
+    renderBand();
   }
 
-  /** 아래 상태 줄: 단말 문구 + PC 사양 (SCRF 시스템 문구 형식) */
-  function renderSysbar() {
-    const bar = $('#sysbar');
-    if (!bar) return;
+  /** 왼쪽 위 로고 — 지금 보고 있는 서버(또는 만들고 있는 서버)의 종류 표시를 쓴다 */
+  function renderBrand() {
+    put($('#brand'), typeMark(brandType(), '.brand-mark'), h('div.brand-text', null, h('span.brand-word', null, 'MCES'), h('span.brand-sub', null, 'SERVER TERMINAL · 0x3F7A')));
+  }
+
+  /** 위쪽 꺼진 띠 바닥면에 새기는 단말 문구 (SCRF 시스템 문구 형식) */
+  function renderBand() {
+    if (!window.Scene) return;
     const specs = state.specs;
     const running = state.servers.filter((s) => s.status === 'running').length;
     const busy = state.servers.some((s) => s.status === 'starting' || s.status === 'stopping');
     const java = state.javaInstalled.length ? state.javaInstalled.map((j) => j.major).join('·') : '없음';
-    const item = (k, v, cls = '') => h(`span.sys-item${cls}`, null, h('span.sys-k', null, k), h('span.sys-v', null, v));
-    put(bar,
-      h(
-        'span.sys-route',
-        null,
-        h('span.sys-tag', null, '[MCES ROUTE]'),
-        ` 단말 상태 : ${busy ? '전환 중' : '정상'} · 서버 ${state.servers.length} · 실행 ${running}`,
-      ),
-      h('span.sys-mark', { 'aria-hidden': 'true' }),
-      h(
-        'span.sys-specs',
-        null,
-        specs ? item('MEM', `${specs.totalGb}GB`) : null,
-        specs ? item('추천', fmt.gb(specs.recommendedMb), '.sys-acc') : null,
-        specs ? item('CPU', `${specs.cpuCores}C`) : null,
-        item('JAVA', java),
-      ),
-    );
+    const right = [specs ? `MEM ${specs.totalGb}GB` : null, specs ? `추천 ${fmt.gb(specs.recommendedMb)}` : null, specs ? `CPU ${specs.cpuCores}C` : null, `JAVA ${java}`].filter(Boolean).join('  ·  ');
+    window.Scene.setBand({
+      ok: true,
+      tag: '[MCES ROUTE]',
+      line: `단말 상태 : ${busy ? '전환 중' : '정상'} · 서버 ${state.servers.length} · 실행 ${running}`,
+      link: state.tunnel.status === 'connected' || Object.keys(state.tunnel.addresses || {}).length > 0,
+      code: 'MC.ES-0.7',
+      right,
+    });
   }
 
   function selectServer(id) {
@@ -284,21 +262,31 @@
     live = {};
     progressViews.clear();
     const main = $('#main');
+    const detail = $('#detail');
     if (state.selected === 'new') {
-      put(main, renderCreate());
+      const right = renderCreate();
+      put(detail, live.createLeft);
+      put(main, right);
       return;
     }
     const s = server();
     if (!s) {
+      put(detail);
       put(main, h('div.empty-state', null, h('div.stack', null, h('h2', null, '서버 선택'))));
       return;
     }
-    live.head = h('div');
+    // 왼쪽 판: 고른 서버의 코발트 박스(이름·상태·접속 주소) → 설명 한 줄 → 상태 위젯 → 시작 줄
+    live.head = h('div.srv-head');
+    live.address = h('div.card-status');
+    live.note = h('p.pane-note');
+    live.stats = h('div.foot-now');
+    live.actions = h('div.srv-actions');
+    put(detail, h('div.viewport', null, h('article.srv-card', null, h('div.card-art'), live.head, live.address)), live.note, live.stats, live.actions);
+    // 오른쪽 판: 번호 탭 → 오류 안내 → 내용
     live.alerts = h('div');
-    live.address = h('div');
     live.tabs = h('div.tabs-wrap');
     live.content = h('div.main-scroll');
-    put(main, live.head, live.alerts, live.address, live.tabs, live.content);
+    put(main, live.tabs, live.alerts, live.content);
     renderHead();
     renderAlerts();
     renderAddress();
@@ -307,7 +295,7 @@
     if (s.status === 'running' && !state.reach[s.id]) checkReach(s.id);
   }
 
-  // ---------- 머리: 이름 · 상태 · 켜기/끄기 · 업데이트 · 삭제 ----------
+  // ---------- 고른 서버: 이름 · 상태 · 켜기/끄기 · 업데이트 · 삭제 ----------
   function renderHead() {
     const s = server();
     if (!s || !live.head) return;
@@ -317,37 +305,50 @@
     const startBar = progressBar(0);
     const startLabel = h('span.note');
     trackProgress(startKey, startBar, startLabel);
-    put(live.head, 
-      h(
-        'div.head',
-        null,
-        h(
-          'div.head-title',
-          null,
-          h('span.head-code', null, `SV-${String(state.servers.indexOf(s) + 1).padStart(2, '0')} · ${TYPE[s.type].sub.toUpperCase()}${s.build ? ` #${s.build}` : ''} · PORT ${s.port}`),
-          h('h1', null, s.name),
-          h(
-            'div.head-meta',
-            null,
-            h('span.chip', null, dot(st.dot), st.label),
-            h('span.chip', null, `${TYPE[s.type].label} · ${TYPE[s.type].sub}`),
-            h('span.chip', null, `마인크래프트 ${s.version}`),
-            s.status === 'running' && s.startedAt ? h('span.note', null, `${fmt.uptime(Date.now() - s.startedAt)}째 실행 중`) : null,
-          ),
-        ),
-        h(
-          'div.head-actions',
-          null,
-          s.status === 'stopped'
-            ? button('켜기', () => startServer(s.id), { kind: 'primary', icon: '▶' })
-            : button(s.status === 'stopping' ? '끄는 중…' : '끄기', () => call('server:stop', s.id), { icon: '■', disabled: s.status === 'stopping' }),
-          button('다시 켜기', () => call('server:restart', s.id), { icon: '↻', disabled: s.status !== 'running' }),
-          button('업데이트', () => openUpdate(s), { icon: '⬆', disabled: busy }),
-          button('삭제', () => removeServer(s), { icon: '✕', kind: 'danger', disabled: busy }),
-        ),
-      ),
-      ...(s.status === 'starting' ? [h('div', { style: { padding: '0 32px 12px' } }, h('div.progress-line', null, startLabel, startBar))] : []),
+    put(live.head,
+      h('span.chip', null, dot(st.dot), st.label),
+      h('h1.card-title', null, h('span.card-name', null, s.name), h('small', null, `${TYPE[s.type].label}`)),
+      h('p.card-code', null, `SV-${String(state.servers.indexOf(s) + 1).padStart(2, '0')} · ${TYPE[s.type].sub.toUpperCase()}${s.build ? ` #${s.build}` : ''} · ${s.version} · PORT ${s.port}`),
     );
+    live.note.textContent = s.status === 'running' && s.startedAt ? `${fmt.uptime(Date.now() - s.startedAt)}째 실행 중 —` : s.status === 'starting' ? '켜는 중 —' : s.status === 'stopping' ? '저장하고 끄는 중 —' : '꺼져 있음 —';
+    const go =
+      s.status === 'stopped'
+        ? { text: '서버 켜기', fn: () => startServer(s.id) }
+        : s.status === 'running'
+          ? { text: '서버 끄기', fn: () => call('server:stop', s.id) }
+          : { text: s.status === 'starting' ? '켜는 중…' : '끄는 중…', fn: null };
+    put(live.actions,
+      s.status === 'starting' ? h('div.progress-line', null, startLabel, startBar) : null,
+      h(
+        `button.go${go.fn ? '' : '.is-busy'}`,
+        { type: 'button', disabled: !go.fn, onclick: go.fn },
+        h('span.go-text', null, go.text),
+        h('span.go-key', null, s.status === 'stopped' ? 'START' : s.status === 'running' ? 'STOP' : 'WAIT'),
+        h('span.go-line'),
+      ),
+      h(
+        'div.sub-actions',
+        null,
+        button('다시 켜기', () => call('server:restart', s.id), { icon: '↻', small: true, kind: 'ghost', disabled: s.status !== 'running' }),
+        button('업데이트', () => openUpdate(s), { icon: '⬆', small: true, kind: 'ghost', disabled: busy }),
+        button('삭제', () => removeServer(s), { icon: '✕', small: true, kind: 'danger', disabled: busy }),
+      ),
+    );
+    live.updateStats = () => {
+      const cur = state.servers.find((x) => x.id === s.id) || s;
+      const m = cur.metrics || {};
+      const on = cur.status === 'running';
+      const tps = on && typeof m.tps === 'number' ? m.tps : null;
+      const heap = on && typeof m.memoryMb === 'number' ? m.memoryMb : null;
+      const stat = (k, v, p, cls = '') => h(`div.stat${cls}`, null, h('span.stat-k', null, k), h('b', null, v), p === null ? null : h('i.stat-bar', null, h('i', { style: { width: `${Math.max(0, Math.min(100, p)).toFixed(1)}%` } })));
+      put(live.stats,
+        stat('접속', `${(cur.players || []).length} / ${cur.settings.maxPlayers}`, ((cur.players || []).length / cur.settings.maxPlayers) * 100),
+        stat('TPS', tps === null ? '—' : tps.toFixed(1), tps === null ? 0 : (tps / 20) * 100, tps !== null && tps < 18 ? '.is-warn' : ''),
+        stat('메모리', heap === null ? '—' : `${(heap / 1024).toFixed(1)}G`, heap === null ? 0 : (heap / cur.memoryMb) * 100),
+        stat('CPU', on ? `${m.cpu || 0}%` : '—', null),
+      );
+    };
+    live.updateStats();
   }
 
   async function startServer(id) {
@@ -419,26 +420,27 @@
     const r = state.reach[s.id];
     const running = s.status === 'running';
     const light = (ok, label, detail) =>
-      h('span.check-item', { title: detail || '' }, dot(ok === null ? 'off' : ok ? 'ok' : 'bad'), h(`span.txt${ok === null ? '' : ok ? '.ok' : '.bad'}`, null, label));
+      h('span.check-item', { title: detail || '' }, dot(ok === null ? 'off' : ok ? 'ok' : 'bad'), h('span', null, label));
 
     let main;
     if (t.status === 'claiming' && t.claimUrl) {
       main = h(
         'div.address-main',
         null,
-        dot('busy'),
-        h('div', { style: { minWidth: 0 } }, h('div.txt', null, 'playit.gg 계정 연결 승인 (처음 한 번)'), h('div.note', null, '브라우저에서 로그인(또는 게스트) 후 "Add Agent" 클릭 → 자동 연결')),
+        h('div.address-col', null, h('span.address-label', null, 'playit.gg 계정 연결 승인 (처음 한 번)'), h('span.address-hint', null, '브라우저에서 로그인(또는 게스트) 후 "Add Agent" 클릭 → 자동 연결')),
         button('브라우저에서 열기', () => call('app:openExternal', t.claimUrl), { small: true, kind: 'primary' }),
       );
     } else if (address) {
       main = h(
         'div.address-main',
         null,
-        h('span.note', { style: { whiteSpace: 'nowrap' } }, s.network && s.network.mode === 'upnp' ? '공유기 주소' : '접속 주소'),
-        h('span.address-text.num.sky', null, address),
-        button('복사', async () => {
+        h('div.address-col', null,
+          h('span.address-label', null, s.network && s.network.mode === 'upnp' ? '공유기 주소' : '접속 주소'),
+          h('span.address-text', null, address),
+        ),
+        button(null, async () => {
           if (await call('app:copy', address)) toast('주소 복사됨', { kind: 'ok' });
-        }, { small: true, kind: 'primary', icon: '⧉' }),
+        }, { small: true, kind: 'primary', icon: '⧉', title: '주소 복사' }),
         button(null, () => editAddress(s), { small: true, kind: 'ghost', icon: '✎', title: '주소 직접 입력' }),
       );
     } else {
@@ -448,25 +450,20 @@
       main = h(
         'div.address-main',
         null,
-        dot(tunnelBusy ? 'busy' : 'off'),
-        h('div', { style: { minWidth: 0, flex: 1 } }, h('div.txt', null, tunnelBusy ? t.message || '터널 연결 중' : '접속 주소 없음'), tunnelBusy ? bar : h('div.note', null, t.status === 'error' ? t.message : '터널 연결 시 포트포워딩 없이 외부 접속 가능')),
+        h('div.address-col', null, h('span.address-label', null, tunnelBusy ? t.message || '터널 연결 중' : '접속 주소 없음'), tunnelBusy ? bar : h('span.address-hint', null, t.status === 'error' ? t.message : '터널 연결 시 포트포워딩 없이 외부 접속 가능')),
         button('터널 연결', () => startTunnel(s.id), { small: true, kind: 'primary', disabled: tunnelBusy }),
         button(null, () => editAddress(s), { small: true, kind: 'ghost', icon: '✎', title: '주소 직접 입력' }),
       );
     }
 
-    put(live.address, 
+    put(live.address,
+      main,
       h(
-        'div.card.address-bar',
+        'div.checks',
         null,
-        main,
-        h(
-          'div.checks',
-          null,
-          light(running && r ? r.local.online : null, '서버 응답', r && r.local.online ? `응답 ${r.local.latency}ms` : ''),
-          light(running && r && r.address ? r.external.online : null, '외부 접속', r && r.external.checkedBy ? `${r.external.checkedBy} 점검` : ''),
-          button('점검', () => checkReach(s.id, true), { small: true, kind: 'ghost', disabled: !running, title: '외부에서 접속 가능한지 다시 확인' }),
-        ),
+        light(running && r ? r.local.online : null, '서버 응답', r && r.local.online ? `응답 ${r.local.latency}ms` : ''),
+        light(running && r && r.address ? r.external.online : null, '외부 접속', r && r.external.checkedBy ? `${r.external.checkedBy} 점검` : ''),
+        button('점검', () => checkReach(s.id, true), { small: true, kind: 'ghost', disabled: !running, title: '외부에서 접속 가능한지 다시 확인' }),
       ),
     );
   }
@@ -1459,10 +1456,15 @@
   // ---------- 새 서버 만들기 (마법사가 아니라 한 화면) ----------
   /** 만들기 화면 머리: 새로 만들기 / 기존 서버 가져오기 전환 */
   function createHead(title, sub) {
+    return h('div.create-head', null, h('div', null, h('h1', null, title), h('p', { style: { marginTop: '6px' } }, sub)));
+  }
+
+  /** 왼쪽 판 머리: 새로 만들기 / 기존 서버 가져오기 */
+  function createLeftHead() {
     return h(
-      'div.create-head',
+      'div.create-left-head',
       null,
-      h('div', null, h('h1', null, title), h('p', { style: { marginTop: '6px' } }, sub)),
+      h('span.pane-label', null, 'SV-NEW · 새 서버'),
       seg([{ value: 'new', label: '새로 만들기' }, { value: 'import', label: '기존 서버 가져오기' }], state.createMode || 'new', (v) => {
         state.createMode = v;
         render();
@@ -1488,7 +1490,7 @@
       busy: false,
     });
 
-    const root = h('div.main-scroll', { style: { paddingTop: '26px' } });
+    const root = h('div.main-scroll');
     const defaultName = () => `${c.version || ''} ${TYPE[c.type].label}`.trim();
     const nameField = input(c.name, (v) => {
       c.name = v;
@@ -1632,7 +1634,7 @@
       );
     };
     const typeCards = h(
-      'div.type-grid',
+      'div.type-list',
       null,
       TYPE_CARDS.map((t) =>
         h(
@@ -1657,6 +1659,8 @@
       ),
     );
     drawLoader();
+    // 서버 종류는 왼쪽 판에 세로로 쌓는다
+    live.createLeft = h('div.create-left', null, createLeftHead(), typeCards, loaderRow);
 
     const memMarks = [{ value: specs.recommendedMb, label: `추천 ${fmt.gb(specs.recommendedMb)}` }];
     const mem = slider({ min: 1024, max: specs.maxMb, step: 512, value: c.memoryMb, onInput: (v) => (c.memoryMb = v), format: fmt.gb, marks: memMarks });
@@ -1695,7 +1699,7 @@
     root.append(
       h(
         'div.stack',
-        { style: { gap: '22px', maxWidth: '1080px' } },
+        { style: { gap: '18px' } },
         createHead('새 서버 만들기', '"서버 만들기"를 누르면 Java 확인부터 최적화까지 자동 진행'),
 
         h('div.card', null, h('div.card-head', null, h('div', null, h('h2', null, '만들기 전에 확인'), h('div.note', null, '이 PC에서 자동 확인'))), h(
@@ -1704,8 +1708,6 @@
           javaBox,
           h('div.pc-item.well-sm', null, dot('ok'), h('div', null, h('div.txt', null, `PC 메모리 ${specs.totalGb}GB`), h('div.note', null, `서버 추천 할당 ${fmt.gb(specs.recommendedMb)} (나머지는 PC·게임용)`)), h('span.num.sky', null, fmt.gb(specs.recommendedMb))),
         )),
-
-        h('div.card', null, h('div.card-head', null, h('h2', null, '서버 종류')), typeCards, loaderRow),
 
         h(
           'div.grid.grid-2',
@@ -1759,8 +1761,9 @@
   function renderImport() {
     const specs = state.specs || { recommendedMb: 4096, maxMb: 8192, totalGb: 8 };
     const g = (state.importing = state.importing || { det: null, mode: 'copy', name: '', memoryMb: specs.recommendedMb, optimize: true, eula: false, busy: false, inspecting: false });
-    const root = h('div.main-scroll', { style: { paddingTop: '26px' } });
+    const root = h('div.main-scroll');
     const body = h('div.stack', { style: { gap: '22px' } });
+    live.createLeft = h('div.create-left', null, createLeftHead(), h('p.pane-note', null, '앱 밖에서 만든 서버 폴더를 목록에 추가 —'));
 
     const inspect = async (dir) => {
       g.inspecting = true;
@@ -1897,7 +1900,7 @@
       progressBox.classList.toggle('hidden', !g.busy);
     };
     draw();
-    root.append(h('div.stack', { style: { gap: '22px', maxWidth: '1080px' } }, createHead('기존 서버 가져오기', '앱 밖에서 만든 서버를 목록에 추가'), body));
+    root.append(h('div.stack', { style: { gap: '18px' } }, createHead('기존 서버 가져오기', '앱 밖에서 만든 서버를 목록에 추가'), body));
     return root;
   }
 

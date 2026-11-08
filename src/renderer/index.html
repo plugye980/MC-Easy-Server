@@ -9,16 +9,38 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <div class="app">
-    <aside class="side" id="side"></aside>
-    <main class="main" id="main"></main>
-    <footer class="sysbar" id="sysbar"></footer>
+  <!-- 장면: 삼각 타일 벽 (scene.js). 마우스에 따라 아주 조금 기운다 -->
+  <div class="stage" aria-hidden="true"><div class="world"></div></div>
+
+  <!-- 공간 속에 비스듬히 선 판: 왼쪽은 서버 목록과 고른 서버, 오른쪽은 탭과 내용 -->
+  <div class="ui">
+    <header class="brand" id="brand"></header>
+
+    <section class="pane pane-l" aria-label="서버">
+      <span class="pin pin-tl"></span><span class="pin pin-br"></span>
+      <div class="pane-scroll">
+        <nav class="nav" id="side" aria-label="내 서버"></nav>
+        <div class="detail" id="detail"></div>
+      </div>
+      <div class="pane-foot" id="paneFoot"></div>
+    </section>
+
+    <section class="pane pane-r" aria-label="내용">
+      <span class="pin pin-tl"></span><span class="pin pin-br"></span>
+      <main class="main" id="main"></main>
+    </section>
+  </div>
+
+  <!-- 렌즈: 비네트와 낟알 (가장자리 색수차·블러·빛 번짐은 캔버스 안에서) -->
+  <div class="lens" aria-hidden="true">
+    <div class="lens-vignette"></div>
+    <div class="grain"></div>
   </div>
 
   <div class="toasts" id="toasts" aria-live="polite"></div>
   <div class="overlay" id="overlay" hidden></div>
 
-  <script src="backdrop.js"></script>
+  <script src="scene.js"></script>
   <script src="ui.js"></script>
   <script src="charts.js"></script>
   <script src="app.js"></script>
