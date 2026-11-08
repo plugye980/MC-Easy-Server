@@ -67,20 +67,23 @@ function installAgent(dir) {
 }
 
 /** 서버 파일 준비: 보통은 server.jar 로 받고, Forge 는 설치 프로그램을 받아 --installServer 로 설치한다 */
-async function fetchServerFiles(dir, jar, javaBin, onProgress, jarName = 'server.jar') {
+async function fetchServerFiles(dir, jar, javaBin, onProgress, jarName = 'server.jar', loaderName = 'Forge') {
   const target = jar.installer ? jar.fileName : jarName;
   await download(jar.url, path.join(dir, target), {
     sha256: jar.sha256,
     sha1: jar.sha1,
-    onProgress: ({ received, total }) => onProgress({ text: jar.installer ? 'Forge 설치 프로그램 내려받는 중' : '서버 파일 내려받는 중', percent: total ? received / total : 0 }),
+    onProgress: ({ received, total }) => onProgress({ text: jar.installer ? `${loaderName} 설치 프로그램 내려받는 중` : '서버 파일 내려받는 중', percent: total ? received / total : 0 }),
   });
   if (!jar.installer) return;
-  onProgress({ text: 'Forge 설치 중 (라이브러리 내려받기, 1~3분)', percent: 0.5 });
-  await forge.runInstaller(dir, javaBin, jar.fileName, (line) => onProgress({ text: `Forge 설치 중 — ${line.trim().slice(0, 70)}`, percent: 0.5 }));
+  onProgress({ text: `${loaderName} 설치 중 (라이브러리 내려받기, 1~3분)`, percent: 0.5 });
+  await forge.runInstaller(dir, javaBin, jar.fileName, (line) => onProgress({ text: `${loaderName} 설치 중 — ${line.trim().slice(0, 70)}`, percent: 0.5 }));
   forge.cleanupInstaller(dir, jar.fileName);
 }
 
-const MOD_TYPES = ['forge', 'fabric'];
+const MOD_TYPES = ['forge', 'fabric', 'neoforge'];
+/** Forge 처럼 설치 프로그램으로 깔고 인자 파일로 켜는 로더 */
+const INSTALLER_TYPES = ['forge', 'neoforge'];
+const LOADER_NAME = { forge: 'Forge', neoforge: 'NeoForge' };
 const CONSOLE_LOG = 'mces-console.log';
 const CONSOLE_LOG_PREV = 'mces-console.prev.log';
 
@@ -297,7 +300,7 @@ class ServerManager extends EventEmitter {
    */
   async create(o, onProgress = () => {}) {
     if (!o.eula) throw new Error('EULA 동의 필요');
-    if (!['paper', 'forge', 'fabric', 'vanilla', 'hybrid'].includes(o.type)) throw new Error('서버 종류 선택 필요');
+    if (!['paper', 'forge', 'fabric', 'neoforge', 'vanilla', 'hybrid'].includes(o.type)) throw new Error('서버 종류 선택 필요');
     // 맵 설정은 서버 파일을 받기 전에 먼저 검사한다
     const w = o.world || { type: 'normal' };
     if (w.source !== 'import' && w.type === 'flat') world.validateFlat(w.flat);
@@ -311,8 +314,8 @@ class ServerManager extends EventEmitter {
 
       onProgress({ text: '서버 파일 정보 가져오는 중', percent: 0 });
       const jar = await versions.serverJar(o.type, o.version);
-      await fetchServerFiles(dir, jar, rt.bin, onProgress);
-      if (jar.installer && !forge.launchArgs(dir, o.version, jar.build)) throw new Error('Forge 설치 후 실행 파일을 찾지 못함');
+      await fetchServerFiles(dir, jar, rt.bin, onProgress, 'server.jar', LOADER_NAME[o.type]);
+      if (jar.installer && !forge.loaderLaunchArgs(o.type, dir, o.version, jar.build)) throw new Error(`${LOADER_NAME[o.type] || 'Forge'} 설치 후 실행 파일을 찾지 못함`);
 
       // 포트: 다른 서버와 겹치지 않게
       const taken = Servers.all().map((s) => s.port);
@@ -356,7 +359,8 @@ class ServerManager extends EventEmitter {
       Servers.save(server);
 
       // 모드 서버: 서버 최적화 모드 기본 설치 (Forge: ModernFix·FerriteCore / Fabric: Fabric API·Lithium·FerriteCore)
-      const optMods = { forge: optimize.FORGE_OPTIMIZATION_MODS, fabric: optimize.FABRIC_OPTIMIZATION_MODS }[server.type];
+      // NeoForge 도 ModernFix·FerriteCore 가 있다
+      const optMods = { forge: optimize.FORGE_OPTIMIZATION_MODS, neoforge: optimize.FORGE_OPTIMIZATION_MODS, fabric: optimize.FABRIC_OPTIMIZATION_MODS }[server.type];
       if (optMods && server.optimize) {
         for (const slug of optMods) {
           try {
@@ -411,13 +415,13 @@ class ServerManager extends EventEmitter {
       i.metrics.memoryMb = null; // 첫 GC 전까지는 측정 중
       // Forge 는 설치 때 만들어진 인자 파일(@...args.txt) 또는 forge jar 로 켠다
       let launch = ['-jar', server.jarFile || 'server.jar'];
-      if (server.type === 'forge') {
-        launch = forge.launchArgs(dir, server.version, server.build);
-        if (!launch) throw new Error('Forge 실행 파일 없음 — 업데이트 버튼으로 같은 버전을 다시 설치');
+      if (INSTALLER_TYPES.includes(server.type)) {
+        launch = forge.loaderLaunchArgs(server.type, dir, server.version, server.build);
+        if (!launch) throw new Error(`${LOADER_NAME[server.type]} 실행 파일 없음 — 업데이트 버튼으로 같은 버전을 다시 설치`);
       }
       // Forge 는 콘솔 입력을 JLine 터미널로 받는데, 다른 프로그램이 입력을 넘겨 주는 경우(Windows)
       // 명령이 서버에 닿지 않을 수 있다. JLine 을 끄면 표준 입력을 그대로 읽는다.
-      const consoleArgs = server.type === 'forge' || server.type === 'hybrid' ? ['-Dterminal.jline=false', '-Dterminal.ansi=false'] : [];
+      const consoleArgs = INSTALLER_TYPES.includes(server.type) || server.type === 'hybrid' ? ['-Dterminal.jline=false', '-Dterminal.ansi=false'] : [];
       // Windows 는 콘솔 출력을 시스템 코드 페이지(CP949)로 내보내 한글이 깨진다. 앱은 UTF-8 로 읽으므로 맞춘다
       consoleArgs.push('-Dstdout.encoding=UTF-8', '-Dstderr.encoding=UTF-8', '-Dsun.stdout.encoding=UTF-8', '-Dsun.stderr.encoding=UTF-8');
       const args = [...flags, ...optimize.gcLogArgs(rt.major || server.javaMajor), ...agent, ...consoleArgs, ...launch, 'nogui'];
@@ -616,7 +620,8 @@ class ServerManager extends EventEmitter {
     i.pollTick = (i.pollTick || 0) + 1;
     if (i.pollTick % 2 === 1) {
       if (server.type === 'paper') this.sendPoll(id, 'tps');
-      else if ((server.type === 'forge' || server.type === 'hybrid') && versions.compareVersions(server.version, '1.20.3') < 0) this.sendPoll(id, 'forge tps');
+      else if ((server.type === 'forge' || server.type === 'hybrid' || (server.type === 'neoforge' && server.version === '1.20.1')) && versions.compareVersions(server.version, '1.20.3') < 0) this.sendPoll(id, 'forge tps');
+      else if (server.type === 'neoforge' && versions.compareVersions(server.version, '1.20.3') < 0) this.sendPoll(id, 'neoforge tps');
       else if (versions.compareVersions(server.version, '1.20.3') >= 0) this.sendPoll(id, 'tick query');
     }
     try {
@@ -1069,7 +1074,7 @@ class ServerManager extends EventEmitter {
       const javaMajor = await versions.requiredJava(det.version);
       await java.ensure(javaMajor, onProgress);
       if (!inplace) await serverImport.copyTree(src, dir, onProgress);
-      if (det.type === 'forge' && !forge.launchArgs(dir, det.version, det.build)) throw new Error('Forge 실행 파일을 찾지 못함');
+      if (INSTALLER_TYPES.includes(det.type) && !forge.loaderLaunchArgs(det.type, dir, det.version, det.build)) throw new Error(`${LOADER_NAME[det.type]} 실행 파일을 찾지 못함`);
       if (!det.eula) fs.writeFileSync(path.join(dir, 'eula.txt'), `# https://aka.ms/MinecraftEULA 에 동의함 (MCES)\neula=true\n`);
 
       const memoryMb = Number(o.memoryMb) || det.memoryMb || system.specs().recommendedMb;
@@ -1380,7 +1385,7 @@ class ServerManager extends EventEmitter {
     const rt = await java.ensure(javaMajor, onProgress);
     const jar = await versions.serverJar(server.type, targetVersion);
     if (jar.installer) {
-      await fetchServerFiles(dir, jar, rt.bin, onProgress);
+      await fetchServerFiles(dir, jar, rt.bin, onProgress, 'server.jar', LOADER_NAME[server.type]);
     } else {
       await fetchServerFiles(dir, jar, rt.bin, onProgress, 'server.jar.new');
       fs.renameSync(path.join(dir, 'server.jar.new'), path.join(dir, 'server.jar'));

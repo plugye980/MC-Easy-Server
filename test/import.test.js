@@ -89,7 +89,11 @@ test('폴더 알아보기: Spigot · 이름 바꾼 Paper · Forge · NeoForge ·
   const nd = path.join(tmp, 'neo');
   fs.mkdirSync(path.join(nd, 'libraries', 'net', 'neoforged', 'neoforge', '21.1.77'), { recursive: true });
   write(path.join(nd, 'server.properties'), '');
-  assert.match((await serverImport.detect(nd)).problems[0], /NeoForge/);
+  // NeoForge 도 이제 모드 서버로 가져온다
+  const nf = await serverImport.detect(nd);
+  assert.deepStrictEqual(nf.problems, []);
+  assert.strictEqual(nf.type, 'neoforge');
+  assert.strictEqual(nf.version, '1.21.1');
 
   fs.mkdirSync(path.join(tmp, 'empty'));
   assert.match((await serverImport.detect(path.join(tmp, 'empty'))).problems[0], /서버 폴더가 아님/);

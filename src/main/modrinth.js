@@ -9,10 +9,12 @@ const addonMeta = require('./addon-meta');
 const API = 'https://api.modrinth.com/v2';
 
 /** 서버 종류별로 Modrinth에서 받아들일 로더 */
-function loadersFor(type) {
+function loadersFor(type, version) {
   if (type === 'paper') return ['paper', 'spigot', 'bukkit'];
   if (type === 'fabric') return ['fabric'];
   if (type === 'forge') return ['forge'];
+  // NeoForge 1.20.1 은 Forge 1.20.1 에서 갈라져 나와 Forge 모드도 대부분 돌아간다. 1.20.2 부터는 NeoForge 전용
+  if (type === 'neoforge') return version === '1.20.1' ? ['neoforge', 'forge'] : ['neoforge'];
   return ['datapack'];
 }
 
@@ -34,13 +36,13 @@ function kindsOf(server) {
 /** 추가 기능이 들어갈 폴더 (서버 폴더 기준 상대 경로) */
 function addonFolder(server) {
   if (server.type === 'paper') return 'plugins';
-  if (server.type === 'fabric' || server.type === 'forge') return 'mods';
+  if (server.type === 'fabric' || server.type === 'forge' || server.type === 'neoforge') return 'mods';
   return path.join(server.levelName || 'world', 'datapacks');
 }
 
 function searchFacets(server) {
-  const facets = [loadersFor(server.type).map((l) => `categories:${l}`), [`versions:${server.version}`]];
-  if (server.type === 'fabric' || server.type === 'forge') {
+  const facets = [loadersFor(server.type, server.version).map((l) => `categories:${l}`), [`versions:${server.version}`]];
+  if (server.type === 'fabric' || server.type === 'forge' || server.type === 'neoforge') {
     facets.push(['project_type:mod']);
     // 서버에서 돌지 않는 클라이언트 전용 모드는 뺀다
     facets.push(['server_side:required', 'server_side:optional']);
@@ -91,7 +93,7 @@ async function project(idOrSlug) {
 /** 현재 서버 버전·로더로 표시된 버전들. 정식 먼저, 각각 최신순 */
 async function compatibleVersions(server, projectId, gameVersion = server.version) {
   const params = new URLSearchParams({
-    loaders: JSON.stringify(loadersFor(server.type)),
+    loaders: JSON.stringify(loadersFor(server.type, gameVersion)),
     game_versions: JSON.stringify([gameVersion]),
   });
   const versions = await getJson(`${API}/project/${encodeURIComponent(projectId)}/version?${params}`);
@@ -135,7 +137,7 @@ async function install(server, serverDir, projectId, onProgress = () => {}, ctx 
   ctx.visiting.add(projectId);
 
   const [meta, candidates] = await Promise.all([project(projectId), compatibleVersions(server, projectId)]);
-  const typeName = { fabric: 'Fabric', forge: 'Forge', paper: 'Paper' }[server.type] || '';
+  const typeName = { fabric: 'Fabric', forge: 'Forge', neoforge: 'NeoForge', paper: 'Paper' }[server.type] || '';
   const fail = (reason) => {
     if (top) throw new Error(`"${meta.title}": 현재 서버와 맞는 파일 없음 (${reason})`);
     ctx.skipped.push({ title: meta.title, reason });
@@ -285,7 +287,7 @@ async function checkCompatibility(server, gameVersion) {
     body: JSON.stringify({
       hashes: addons.map((a) => a.sha1),
       algorithm: 'sha1',
-      loaders: loadersFor(server.type),
+      loaders: loadersFor(server.type, gameVersion),
       game_versions: [gameVersion],
     }),
   });

@@ -10,6 +10,7 @@
     paper: { label: '플러그인 서버', sub: 'Paper', desc: '플러그인으로 기능 추가. 가장 가볍고 빠름', addon: '플러그인', folder: 'plugins' },
     forge: { label: '모드 서버', sub: 'Forge', desc: '모드 사용. 접속하는 쪽도 같은 모드 설치 필요', addon: '모드', folder: 'mods' },
     fabric: { label: '모드 서버', sub: 'Fabric', desc: '모드 사용. 접속하는 쪽도 같은 모드 설치 필요', addon: '모드', folder: 'mods' },
+    neoforge: { label: '모드 서버', sub: 'NeoForge', desc: '모드 사용. 접속하는 쪽도 같은 모드 설치 필요', addon: '모드', folder: 'mods' },
     vanilla: { label: '바닐라 서버', sub: 'Vanilla', desc: '아무것도 넣지 않은 공식 서버', addon: '데이터팩', folder: 'datapacks' },
     hybrid: { label: '하이브리드 서버', sub: 'Arclight', desc: '플러그인과 Forge 모드를 함께 사용. 접속하는 쪽도 같은 모드 설치 필요', addon: '플러그인·모드', folder: 'plugins · mods' },
   };
@@ -18,11 +19,11 @@
     { value: 'plugin', label: '플러그인', sub: 'Paper·Spigot·Bukkit' },
     { value: 'mod', label: 'Forge 모드', sub: 'Forge' },
   ];
-  const MOD_TYPES = ['forge', 'fabric'];
+  const MOD_TYPES = ['forge', 'fabric', 'neoforge'];
   // 만들기 화면의 종류 카드: 모드 서버는 하나로 두고 안에서 로더(Forge 기본 · Fabric)를 고른다
   const TYPE_CARDS = [
     { key: 'paper', label: '플러그인 서버', sub: 'Paper', desc: TYPE.paper.desc },
-    { key: 'mod', label: '모드 서버', sub: 'Forge · Fabric', desc: TYPE.forge.desc },
+    { key: 'mod', label: '모드 서버', sub: 'Forge · NeoForge · Fabric', desc: TYPE.forge.desc },
     { key: 'vanilla', label: '바닐라 서버', sub: 'Vanilla', desc: TYPE.vanilla.desc },
     { key: 'hybrid', label: '하이브리드 서버', sub: 'Arclight (Forge)', desc: TYPE.hybrid.desc },
   ];
@@ -66,7 +67,7 @@
 
   /** 서버 종류 표시: 플러그인 = 네모, 모드 = 네 칸 블록, 바닐라 = 원, 하이브리드 = 네모 + 블록 */
   function typeMark(type, cls = '') {
-    if (type === 'forge' || type === 'mod') type = 'fabric';
+    if (type === 'forge' || type === 'neoforge' || type === 'mod') type = 'fabric';
     // 하이브리드 = 왼쪽 네모(플러그인) + 오른쪽 블록 두 칸(모드)
     const core = type === 'fabric' ? h('span.mark-core', null, h('i'), h('i'), h('i'), h('i')) : type === 'hybrid' ? h('span.mark-core', null, h('i'), h('i'), h('i')) : h('span.mark-core');
     return h(`span.mark.mark-${TYPE[type] ? type : 'paper'}${cls}`, { 'aria-hidden': 'true' }, core);
@@ -961,7 +962,7 @@
     });
     const placeholder = () => {
       const k = hybrid ? q.kind : null;
-      const ex = k === 'plugin' || s.type === 'paper' ? 'EssentialsX, LuckPerms' : k === 'mod' || s.type === 'forge' ? 'JEI, Create' : s.type === 'fabric' ? 'Sodium, Lithium' : 'Vanilla Tweaks';
+      const ex = k === 'plugin' || s.type === 'paper' ? 'EssentialsX, LuckPerms' : k === 'mod' || s.type === 'forge' || s.type === 'neoforge' ? 'JEI, Create' : s.type === 'fabric' ? 'Sodium, Lithium' : 'Vanilla Tweaks';
       searchField.placeholder = `${kindLabel()} 이름으로 찾기 (예: ${ex})`;
     };
     placeholder();
@@ -1000,7 +1001,7 @@
             MOD_TYPES.includes(s.type) || hybrid
               ? button('접속용 mods.zip', async () => {
                   const r = await call('addons:exportModsZip', s.id);
-                  if (r && r !== true) toast(`mods.zip 저장 — 모드 ${r.count}개 · 압축을 풀어 .minecraft/mods 에 넣기 (${s.type === 'fabric' ? 'Fabric Loader' : 'Forge'} ${r.loader || ''} · 마인크래프트 ${r.minecraft})`.replace('  ', ' '), { kind: 'ok', timeout: 10000 });
+                  if (r && r !== true) toast(`mods.zip 저장 — 모드 ${r.count}개 · 압축을 풀어 .minecraft/mods 에 넣기 (${s.type === 'fabric' ? 'Fabric Loader' : s.type === 'neoforge' ? 'NeoForge' : 'Forge'} ${r.loader || ''} · 마인크래프트 ${r.minecraft})`.replace('  ', ' '), { kind: 'ok', timeout: 10000 });
                 }, { small: true, kind: 'primary', icon: '⇪', title: '접속할 때 필요한 모드 jar 파일을 mods.zip 으로 내보내기 (서버 전용 모드 제외)' })
               : null,
           ),
@@ -1590,7 +1591,7 @@
       put(
         loaderRow,
         MOD_TYPES.includes(c.type)
-          ? row('모드 로더', [h('div', null, 'Forge: 대형 콘텐츠 모드(Create 등) 대부분 지원'), h('div', null, 'Fabric: 가볍고 최신 버전 대응이 빠름')], seg([{ value: 'forge', label: 'Forge (기본)' }, { value: 'fabric', label: 'Fabric' }], c.type, (v) => {
+          ? row('모드 로더', [h('div', null, 'Forge: 대형 콘텐츠 모드(Create 등) 대부분 지원'), h('div', null, 'NeoForge: Forge 후속, 1.20.2 이후 새 모드 다수'), h('div', null, 'Fabric: 가볍고 최신 버전 대응이 빠름')], seg([{ value: 'forge', label: 'Forge (기본)' }, { value: 'neoforge', label: 'NeoForge' }, { value: 'fabric', label: 'Fabric' }], c.type, (v) => {
               c.type = v;
               c.modLoader = v;
               syncAutoName();
@@ -1685,7 +1686,7 @@
             row('마인크래프트 버전', '접속할 클라이언트와 같은 버전 사용. 기본값은 최신 안정 버전', versionBox),
             nameRow,
             row('메모리', 'PC 사양 기준 추천값 표시', mem),
-            row('자동 최적화', "Aikar's flags" + (c.type === 'paper' ? ' · Paper 추천 설정' : '') + ' · 적정 시야 거리' + (c.type === 'fabric' ? ' · 최적화 모드(Lithium 등)' : c.type === 'forge' ? ' · 최적화 모드(ModernFix 등)' : ''), toggle(c.optimize, (v) => (c.optimize = v))),
+            row('자동 최적화', "Aikar's flags" + (c.type === 'paper' ? ' · Paper 추천 설정' : '') + ' · 적정 시야 거리' + (c.type === 'fabric' ? ' · 최적화 모드(Lithium 등)' : c.type === 'forge' || c.type === 'neoforge' ? ' · 최적화 모드(ModernFix 등)' : ''), toggle(c.optimize, (v) => (c.optimize = v))),
           ),
           h(
             'div.card',
@@ -1722,7 +1723,7 @@
   }
 
   // ---------- 기존 서버 가져오기 (앱 밖에서 만든 서버 폴더) ----------
-  const FLAVOR_NOTE = { Paper: 'Paper', Purpur: 'Purpur (Paper 계열)', Folia: 'Folia (Paper 계열)', Pufferfish: 'Pufferfish (Paper 계열)', Spigot: 'Spigot (Bukkit 계열)', CraftBukkit: 'CraftBukkit', 'Bukkit 계열': 'Bukkit 계열', Fabric: 'Fabric', Forge: 'Forge', Vanilla: '바닐라' };
+  const FLAVOR_NOTE = { Paper: 'Paper', Purpur: 'Purpur (Paper 계열)', Folia: 'Folia (Paper 계열)', Pufferfish: 'Pufferfish (Paper 계열)', Spigot: 'Spigot (Bukkit 계열)', CraftBukkit: 'CraftBukkit', 'Bukkit 계열': 'Bukkit 계열', Fabric: 'Fabric', Forge: 'Forge', NeoForge: 'NeoForge', Vanilla: '바닐라' };
 
   function renderImport() {
     const specs = state.specs || { recommendedMb: 4096, maxMb: 8192, totalGb: 8 };
