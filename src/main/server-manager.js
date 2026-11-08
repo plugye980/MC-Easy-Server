@@ -81,6 +81,8 @@ async function fetchServerFiles(dir, jar, javaBin, onProgress, jarName = 'server
 }
 
 const MOD_TYPES = ['forge', 'fabric'];
+const CONSOLE_LOG = 'mces-console.log';
+const CONSOLE_LOG_PREV = 'mces-console.prev.log';
 
 const DEFAULT_BACKUP = { enabled: true, intervalMin: 30, keep: 10, onStop: true };
 
@@ -117,6 +119,16 @@ function findCrashReport(dir, since) {
   } catch {
     return null;
   }
+}
+
+/** 이번 실행에서 서버가 낸 마지막 오류 줄 (예외 이름이나 ERROR 줄). 원인을 담은 "Caused by" 를 우선 */
+function lastErrorLine(entries, since) {
+  const run = entries.filter((e) => e.kind === 'out' && (!since || e.t >= since));
+  const pick = (re) => [...run].reverse().find((e) => re.test(e.line));
+  const hit = pick(/^\s*Caused by: /) || pick(/(?:Exception|Error)(?::|\s|$)/) || pick(/\/(?:ERROR|FATAL)\]|\b(?:ERROR|FATAL|SEVERE)\b/);
+  if (!hit) return null;
+  const text = hit.line.replace(/^(?:\[[^\]]*\]\s*)+:?\s*/, '').replace(/^\s*Caused by:\s*/, '').trim();
+  return text.length > 180 ? `${text.slice(0, 177)}…` : text;
 }
 
 /** 종료 코드를 쉬운 말로. 모르면 null */
@@ -212,8 +224,66 @@ class ServerManager extends EventEmitter {
     return this.inst(id).metrics.history;
   }
 
+  /** 콘솔 기록. 앱을 다시 켜 메모리가 비었으면 파일(logs/mces-console.log)에서 불러온다 */
   consoleLines(id) {
-    return this.inst(id).console;
+    const i = this.inst(id);
+    if (i.console.length || !Servers.get(id)) return i.console;
+    const logs = path.join(this.dir(id), 'logs');
+    for (const name of [CONSOLE_LOG, CONSOLE_LOG_PREV]) {
+      let text;
+      try {
+        text = fs.readFileSync(path.join(logs, name), 'utf8');
+      } catch {
+        continue;
+      }
+      const lines = text.split(/\r?\n/).filter(Boolean).slice(-1999);
+      if (!lines.length) continue;
+      const t = fs.statSync(path.join(logs, name)).mtimeMs;
+      i.console = [
+        { t, line: `── 지난 실행 기록 (logs/${name}) ──`, kind: 'app' },
+        ...lines.map((l) => {
+          const m = /^\[MCES:(\w+)\] (.*)$/.exec(l);
+          return m ? { t, line: m[2], kind: m[1] } : { t, line: l, kind: 'out' };
+        }),
+      ];
+      break;
+    }
+    return i.console;
+  }
+
+  /** 켤 때마다 새 기록 파일을 연다 (직전 실행 기록은 mces-console.prev.log 로 남김) */
+  openConsoleLog(id) {
+    const i = this.inst(id);
+    this.closeConsoleLog(id);
+    const logs = path.join(this.dir(id), 'logs');
+    try {
+      fs.mkdirSync(logs, { recursive: true });
+      const file = path.join(logs, CONSOLE_LOG);
+      if (fs.existsSync(file)) fs.renameSync(file, path.join(logs, CONSOLE_LOG_PREV));
+      i.logStream = fs.createWriteStream(file, { flags: 'a' });
+      i.logStream.on('error', () => (i.logStream = null));
+    } catch {
+      i.logStream = null;
+    }
+  }
+
+  closeConsoleLog(id) {
+    const i = this.inst(id);
+    if (i.logStream) i.logStream.end();
+    i.logStream = null;
+  }
+
+  /** 콘솔 한 줄을 파일에도 남긴다. 앱이 쓴 줄은 [MCES:종류] 를 붙여 다시 불러올 때 구분한다 */
+  writeConsoleFile(id, entry) {
+    const i = this.inst(id);
+    const text = `${entry.kind === 'out' ? '' : `[MCES:${entry.kind}] `}${entry.line}\n`;
+    if (i.logStream) return i.logStream.write(text);
+    try {
+      const logs = path.join(this.dir(id), 'logs');
+      if (!Servers.get(id) || !fs.existsSync(this.dir(id))) return;
+      fs.mkdirSync(logs, { recursive: true });
+      fs.appendFileSync(path.join(logs, CONSOLE_LOG), text);
+    } catch { /* 기록 실패는 무시 */ }
   }
 
   emitServer(id) {
@@ -315,6 +385,9 @@ class ServerManager extends EventEmitter {
     i.status = 'starting';
     i.translator.reset();
     i.players.clear();
+    this.consoleLines(id); // 앱을 다시 켠 뒤면 지난 기록을 먼저 불러 둔다
+    this.openConsoleLog(id);
+    i.runStartedAt = Date.now(); // 이번 실행의 콘솔 줄만 골라 볼 때 쓴다
     this.emitServer(id);
 
     try {
@@ -344,7 +417,9 @@ class ServerManager extends EventEmitter {
       }
       // Forge 는 콘솔 입력을 JLine 터미널로 받는데, 다른 프로그램이 입력을 넘겨 주는 경우(Windows)
       // 명령이 서버에 닿지 않을 수 있다. JLine 을 끄면 표준 입력을 그대로 읽는다.
-      const consoleArgs = server.type === 'forge' ? ['-Dterminal.jline=false', '-Dterminal.ansi=false'] : [];
+      const consoleArgs = server.type === 'forge' || server.type === 'hybrid' ? ['-Dterminal.jline=false', '-Dterminal.ansi=false'] : [];
+      // Windows 는 콘솔 출력을 시스템 코드 페이지(CP949)로 내보내 한글이 깨진다. 앱은 UTF-8 로 읽으므로 맞춘다
+      consoleArgs.push('-Dstdout.encoding=UTF-8', '-Dstderr.encoding=UTF-8', '-Dsun.stdout.encoding=UTF-8', '-Dsun.stderr.encoding=UTF-8');
       const args = [...flags, ...optimize.gcLogArgs(rt.major || server.javaMajor), ...agent, ...consoleArgs, ...launch, 'nogui'];
       this.log(id, `▶ ${path.basename(rt.bin)} ${args.join(' ')}`, 'app');
       const proc = spawn(rt.bin, args, { cwd: dir, windowsHide: true });
@@ -406,6 +481,7 @@ class ServerManager extends EventEmitter {
       i.status = 'stopped';
       i.proc = null;
       this.log(id, `시작 실패: ${e.message}`, 'error');
+      this.closeConsoleLog(id);
       this.emit('alert', {
         serverId: id,
         id: `start-failed-${Date.now()}`,
@@ -422,7 +498,10 @@ class ServerManager extends EventEmitter {
   log(id, line, kind = 'out') {
     const i = this.inst(id);
     const entry = { t: Date.now(), line, kind };
+    // 앱을 다시 켠 뒤라면 지난 기록부터 불러 두고 이어 붙인다
+    if (!i.console.length) this.consoleLines(id);
     i.console.push(entry);
+    this.writeConsoleFile(id, entry);
     if (i.console.length > 2000) i.console.splice(0, i.console.length - 2000);
     this.emit('console', { serverId: id, ...entry });
   }
@@ -598,7 +677,9 @@ class ServerManager extends EventEmitter {
     i.metrics.processMb = null;
     i.startedAt = null;
     try { pidusage.clear(); } catch { /* 무시 */ }
-    this.log(id, `■ 서버 종료 (종료 코드 ${code === null ? (signal || '없음') : code})`, 'app');
+    // Windows 는 -1 을 4294967295 처럼 부호 없는 값으로 준다
+    const shown = code === null ? signal || '없음' : code > 0x7fffffff ? code - 0x100000000 : code;
+    this.log(id, `■ 서버 종료 (종료 코드 ${shown})`, 'app');
     if (!wasStopping && (code !== 0 || wasStarting)) {
       // 아무것도 출력하지 않고 꺼졌으면 Java 충돌 기록(hs_err_pid*.log)이나 종료 코드로 원인을 짐작한다
       const quiet = !i.outputLines;
@@ -609,12 +690,13 @@ class ServerManager extends EventEmitter {
       }
       const hint = explainExit(code, { quiet, crash: !!crash });
       if (hint) this.log(id, hint, 'error');
+      const lastError = lastErrorLine(i.console, i.runStartedAt);
       this.emit('alert', {
         serverId: id,
         id: `crash-${Date.now()}`,
         severity: 'error',
         title: wasStarting ? '서버 시작 중 종료' : '서버 비정상 종료',
-        message: hint || '위 안내 먼저 확인. 자세한 로그는 콘솔 탭',
+        message: hint || (lastError ? `마지막 오류: ${lastError}` : '위 안내 먼저 확인. 자세한 로그는 콘솔 탭'),
         actions: [
           { id: 'open-tab', label: '콘솔 보기', payload: { tab: 'console' } },
           ...(crash || quiet ? [{ id: 'open-folder', label: '서버 폴더 열기' }] : []),
@@ -635,6 +717,7 @@ class ServerManager extends EventEmitter {
       }
     }
     i.ranLongEnough = false;
+    this.closeConsoleLog(id);
   }
 
   /** 저장 후 정지. timeout 안에 안 꺼지면 그때만 강제 종료한다. */
@@ -951,6 +1034,7 @@ class ServerManager extends EventEmitter {
   async remove(id, { keepBackups = false } = {}) {
     const i = this.inst(id);
     if (i.proc) await this.stop(id);
+    this.closeConsoleLog(id);
     // 그 자리에서 가져온 서버는 앱 목록에서만 뺀다 (원래 폴더는 사용자 것)
     if (!Servers.get(id) || !Servers.get(id).externalDir) fs.rmSync(this.dir(id), { recursive: true, force: true });
     if (!keepBackups) fs.rmSync(paths.serverBackups(id), { recursive: true, force: true });
@@ -1418,4 +1502,4 @@ class ServerManager extends EventEmitter {
   }
 }
 
-module.exports = { explainExit, findCrashReport, ServerManager, RE };
+module.exports = { lastErrorLine, explainExit, findCrashReport, ServerManager, RE };

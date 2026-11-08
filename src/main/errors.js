@@ -131,6 +131,32 @@ const RULES = [
     }),
   },
   {
+    // Mixin: 모드(또는 하이브리드 서버)가 마인크래프트 코드를 고쳐 끼우다 실패. 설정 파일 이름으로 모드를 짐작한다
+    id: 'mixin-failed',
+    test: /Mixin apply (?:failed|for mod \S+ failed) ([\w.-]+?\.json)|Mixin \[([\w.-]+?\.json):/i,
+    build: (line, m) => {
+      const cfg = m[1] || m[2];
+      const mod = cfg.replace(/\.json$/i, '').replace(/^mixins?\./i, '').replace(/[.-]mixins?$/i, '').split(/[.-]/)[0];
+      if (/^arclight|^mohist|^ketting|^magma/i.test(mod)) {
+        return {
+          severity: 'error',
+          title: '하이브리드 서버와 모드 충돌',
+          message: '하이브리드 서버가 플러그인용으로 마인크래프트 코드를 고치는 중 실패 → 같은 부분을 고치는 모드와 충돌하거나 이 하이브리드 빌드의 문제. 모드를 모두 끄고 켜 보고, 켜지면 반씩 다시 켜서 원인 모드 찾기',
+          actions: [{ id: 'open-tab', label: '모드 목록 보기', payload: { tab: 'addons' } }],
+        };
+      }
+      return {
+        severity: 'error',
+        title: '모드 적용 실패 (Mixin)',
+        message: `"${mod}" 모드가 마인크래프트 코드를 고치다 실패 → 이 버전과 맞지 않거나 다른 모드와 충돌. 이 모드 끄기 또는 버전 확인`,
+        actions: [
+          { id: 'disable-mod', label: '이 모드 끄기', payload: { modId: mod } },
+          { id: 'open-tab', label: '모드 목록 보기', payload: { tab: 'addons' } },
+        ],
+      };
+    },
+  },
+  {
     id: 'fabric-incompatible',
     test: /Incompatible mods? (?:found|set)|Mod resolution failed/i,
     build: () => ({

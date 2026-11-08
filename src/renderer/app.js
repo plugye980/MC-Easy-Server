@@ -651,13 +651,20 @@
         box.scrollTop = box.scrollHeight;
       });
     }
-    return h('div.card', null, box, h('div.console-input', null, field, button('보내기', send, { kind: 'primary', disabled: s.status !== 'running' })));
+    return h(
+      'div.card',
+      null,
+      box,
+      h('div.console-input', null, field, button('보내기', send, { kind: 'primary', disabled: s.status !== 'running' })),
+      h('div.inline', { style: { marginTop: '10px', justifyContent: 'space-between' } }, h('span.note', null, '콘솔 내용은 logs/mces-console.log 에도 저장 (직전 실행은 mces-console.prev.log)'), button('로그 폴더 열기', () => call('server:openLogs', s.id), { small: true, kind: 'ghost', icon: '⌂' })),
+    );
   }
 
   function appendConsole(box, e, scroll = true) {
     const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
     const kind = e.kind !== 'out' ? e.kind : /\bWARN\b/.test(e.line) ? 'warn' : /\b(ERROR|SEVERE|FATAL)\b|Exception/.test(e.line) ? 'error' : '';
-    box.appendChild(h(`div.console-line${kind ? `.${kind}` : ''}`, null, e.line));
+    // 종류 클래스는 k- 를 붙인다 (.app 은 창 전체 배치에 쓰는 이름이라 겹치면 줄이 화면 높이만큼 커진다)
+    box.appendChild(h(`div.console-line${kind ? `.k-${kind}` : ''}`, null, e.line));
     while (box.childElementCount > 2000) box.firstChild.remove();
     if (scroll && atBottom) box.scrollTop = box.scrollHeight;
   }
