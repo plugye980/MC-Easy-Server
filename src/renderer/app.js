@@ -184,49 +184,49 @@
   }
 
   function renderSide() {
-    const specs = state.specs;
     const list = h(
       'div.server-list',
       null,
       state.servers.length
-        ? state.servers.map((s) =>
+        ? state.servers.map((s, i) =>
             h(
               `button.srv${s.id === state.selected ? '.on' : ''}`,
               { type: 'button', onclick: () => selectServer(s.id) },
-              dot(STATUS[s.status].dot),
-              h('span', { style: { minWidth: 0 } }, h('span.srv-name.txt', null, s.name), h('span.srv-meta.note', null, `${TYPE[s.type].sub} ${s.version}${s.status === 'running' ? ` · ${s.players.length}명` : ''}`)),
-              s.status === 'running' && s.metrics && typeof s.metrics.tps === 'number' ? h('span.num.sky', { style: { fontSize: '0.78rem' } }, s.metrics.tps.toFixed(1)) : null,
+              h('span.srv-code', null, String(i + 1).padStart(2, '0')),
+              h(
+                'span',
+                { style: { minWidth: 0 } },
+                h('span.srv-name.txt', null, s.name),
+                h('span.srv-meta.note', null, dot(STATUS[s.status].dot), `${TYPE[s.type].sub} ${s.version}${s.status === 'running' ? ` · ${s.players.length}명` : ''}`),
+              ),
+              s.status === 'running' && s.metrics && typeof s.metrics.tps === 'number' ? h('span.srv-tps.num', { title: 'TPS' }, s.metrics.tps.toFixed(1)) : null,
             ),
           )
         : h('span.empty.note', null, '서버 없음'),
     );
     const side = $('#side');
-    put(side, 
-      h('div.brand', null, typeMark(brandType(), '.brand-mark'), h('div', null, h('h1', null, 'MCES'), h('span.note', null, '마인크래프트 서버 관리'))),
+    put(side,
+      h(
+        'div.brand',
+        null,
+        typeMark(brandType(), '.brand-mark'),
+        h('div.brand-text', null, h('span.brand-word', null, 'MCES'), h('span.brand-sub', null, 'SCRF · SECTOR A')),
+      ),
       h(
         'div.side-section',
         { style: { flex: '1', minHeight: 0 } },
-        h('div.side-head', null, h('span.label', null, '내 서버')),
+        h('div.side-head', null, h('span.label', null, '내 서버'), h('span.side-count', null, String(state.servers.length).padStart(2, '0'))),
         list,
-        button('새 서버 만들기', () => selectServer('new'), { icon: '+', kind: state.selected === 'new' ? 'primary' : undefined, class: 'btn-block' }),
+        h(
+          `button.srv-new${state.selected === 'new' ? '.on' : ''}`,
+          { type: 'button', onclick: () => selectServer('new') },
+          h('span.srv-new-mark', { 'aria-hidden': 'true' }, '+'),
+          h('span.txt', null, '새 서버 만들기'),
+        ),
       ),
       h(
         'div.side-foot',
         null,
-        specs
-          ? h(
-              'div.spec',
-              null,
-              h('span.note', null, 'PC 메모리'),
-              h('span.num', null, `${specs.totalGb}GB`),
-              h('span.note', null, '추천 할당'),
-              h('span.num.sky', null, fmt.gb(specs.recommendedMb)),
-              h('span.note', null, 'CPU'),
-              h('span.num', null, `${specs.cpuCores}코어`),
-              h('span.note', null, 'Java'),
-              h('span.num', null, state.javaInstalled.length ? state.javaInstalled.map((j) => j.major).join(', ') : '아직 없음'),
-            )
-          : null,
         seg(
           [
             { value: 'light', label: '밝게' },
@@ -243,6 +243,35 @@
       ),
     );
     side.querySelector('.side-foot .seg').classList.add('seg-wide');
+    renderSysbar();
+  }
+
+  /** 아래 상태 줄: 단말 문구 + PC 사양 (SCRF 시스템 문구 형식) */
+  function renderSysbar() {
+    const bar = $('#sysbar');
+    if (!bar) return;
+    const specs = state.specs;
+    const running = state.servers.filter((s) => s.status === 'running').length;
+    const busy = state.servers.some((s) => s.status === 'starting' || s.status === 'stopping');
+    const java = state.javaInstalled.length ? state.javaInstalled.map((j) => j.major).join('·') : '없음';
+    const item = (k, v, cls = '') => h(`span.sys-item${cls}`, null, h('span.sys-k', null, k), h('span.sys-v', null, v));
+    put(bar,
+      h(
+        'span.sys-route',
+        null,
+        h('span.sys-tag', null, '[MCES ROUTE]'),
+        ` 단말 상태 : ${busy ? '전환 중' : '정상'} · 서버 ${state.servers.length} · 실행 ${running}`,
+      ),
+      h('span.sys-mark', { 'aria-hidden': 'true' }),
+      h(
+        'span.sys-specs',
+        null,
+        specs ? item('MEM', `${specs.totalGb}GB`) : null,
+        specs ? item('추천', fmt.gb(specs.recommendedMb), '.sys-acc') : null,
+        specs ? item('CPU', `${specs.cpuCores}C`) : null,
+        item('JAVA', java),
+      ),
+    );
   }
 
   function selectServer(id) {
@@ -295,6 +324,7 @@
         h(
           'div.head-title',
           null,
+          h('span.head-code', null, `SV-${String(state.servers.indexOf(s) + 1).padStart(2, '0')} · ${TYPE[s.type].sub.toUpperCase()}${s.build ? ` #${s.build}` : ''} · PORT ${s.port}`),
           h('h1', null, s.name),
           h(
             'div.head-meta',
@@ -620,7 +650,8 @@
   }
 
   function info(label, value) {
-    return h('div.list-item', { style: { gridTemplateColumns: '1fr auto', padding: '9px 2px' } }, h('span.note', null, label), h('span.num', null, value));
+    // 한글이 섞인 값은 본문 서체로, 숫자·코드만 고정폭으로
+    return h('div.list-item', { style: { gridTemplateColumns: '1fr auto' } }, h('span.note', null, label), h(/[가-힣]/.test(value) ? 'span.txt' : 'span.num', null, value));
   }
 
   // 콘솔
