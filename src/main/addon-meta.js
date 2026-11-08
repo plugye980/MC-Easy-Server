@@ -273,10 +273,10 @@ const rangeText = (r) => (Array.isArray(r) ? r.join(', ') : String(r));
  * @returns {{status: 'ok'|'bad'|'unknown', reason: string|null}}
  */
 /** 서버 종류에 맞는 로더 정보 (여러 로더용 jar 에서 고른다) */
-const PREFERRED = { paper: 'plugin', forge: 'forge', fabric: 'fabric' };
+const PREFERRED = { paper: ['plugin'], forge: ['forge'], fabric: ['fabric'], neoforge: ['neoforge', 'forge'] };
 function forServer(meta, serverType) {
-  const want = PREFERRED[serverType];
-  if (!meta || !meta.variants || !want || !meta.variants[want]) return meta;
+  const want = (PREFERRED[serverType] || []).find((k) => meta && meta.variants && meta.variants[k]);
+  if (!want) return meta;
   return { ...meta.variants[want], variants: meta.variants };
 }
 
@@ -295,6 +295,15 @@ function compat(meta, serverType, mc) {
     if (meta.kind === 'fabric' || meta.kind === 'quilt') return { status: 'bad', reason: 'Fabric 모드 — Forge 서버에서 사용 불가', wrongType: true };
     if (meta.kind === 'neoforge') return { status: 'bad', reason: 'NeoForge 전용 모드', wrongType: true };
     if (meta.kind !== 'forge') return { status: 'bad', reason: 'Forge 모드 파일 아님', wrongType: true };
+    if (!meta.mcRange) return { status: 'unknown', reason: '지원 버전 표시 없음' };
+    return matchesMavenRange(meta.mcRange, mc) ? { status: 'ok', reason: null } : { status: 'bad', reason: `마인크래프트 ${meta.mcRange} 전용` };
+  }
+  if (serverType === 'neoforge') {
+    if (meta.kind === 'plugin') return { status: 'bad', reason: '플러그인 파일 — 모드 서버에서 사용 불가', wrongType: true };
+    if (meta.kind === 'fabric' || meta.kind === 'quilt') return { status: 'bad', reason: 'Fabric 모드 — NeoForge 서버에서 사용 불가', wrongType: true };
+    // NeoForge 1.20.1 은 Forge 1.20.1 모드를 그대로 쓸 수 있다. 1.20.2 부터는 NeoForge 전용만
+    if (meta.kind === 'forge' && mc !== '1.20.1') return { status: 'bad', reason: 'Forge 모드 — NeoForge 는 1.20.1 에서만 Forge 모드 사용 가능', wrongType: true };
+    if (meta.kind !== 'neoforge' && meta.kind !== 'forge') return { status: 'bad', reason: 'NeoForge 모드 파일 아님', wrongType: true };
     if (!meta.mcRange) return { status: 'unknown', reason: '지원 버전 표시 없음' };
     return matchesMavenRange(meta.mcRange, mc) ? { status: 'ok', reason: null } : { status: 'bad', reason: `마인크래프트 ${meta.mcRange} 전용` };
   }

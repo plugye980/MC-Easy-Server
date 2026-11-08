@@ -1,6 +1,6 @@
 'use strict';
 // 서버 종류별 버전 목록, 서버 jar 다운로드 정보, 필요한 Java 버전
-const { getJson } = require('./http');
+const { getJson, getText } = require('./http');
 
 const MOJANG_MANIFEST = 'https://piston-meta.mojang.com/mc/game/version_manifest_v2.json';
 const PAPER_V3 = 'https://fill.papermc.io/v3/projects/paper';
@@ -129,6 +129,66 @@ async function listForge() {
   });
 }
 
+// ---------- NeoForge ----------
+// 버전 이름에 마인크래프트 버전이 들어 있다: 21.1.77 → 1.21.1, 20.4.237 → 1.20.4, 21.0.x → 1.21
+// 26.1 처럼 연도식 마인크래프트는 26.1.0.3 처럼 앞 세 자리가 그대로 마인크래프트 버전.
+// 1.20.1 만 예외로 net.neoforged:forge 1.20.1-47.1.x 로 나왔다.
+const NEOFORGE_MAVEN = 'https://maven.neoforged.net/releases/net/neoforged';
+const NEOFORGE_META = `${NEOFORGE_MAVEN}/neoforge/maven-metadata.xml`;
+const NEOFORGE_LEGACY_META = `${NEOFORGE_MAVEN}/forge/maven-metadata.xml`;
+
+/** NeoForge 버전 → 마인크래프트 버전 */
+function neoforgeMc(v) {
+  const m = /^(\d+)\.(\d+)(?:\.(\d+))?/.exec(v);
+  if (!m) return null;
+  const [maj, min, patch] = [Number(m[1]), Number(m[2]), m[3]];
+  if (maj >= 25) return patch && patch !== '0' ? `${maj}.${min}.${patch}` : `${maj}.${min}`;
+  return min === 0 ? `1.${maj}` : `1.${maj}.${min}`;
+}
+
+/** maven-metadata.xml 의 <version> 목록 */
+function mavenVersions(xml) {
+  return [...String(xml).matchAll(/<version>([^<]+)<\/version>/g)].map((x) => x[1].trim());
+}
+
+/** 마인크래프트 버전별 고를 NeoForge 빌드 (정식 우선, 같은 중에선 최신) */
+function neoforgeBuilds(xml, legacyXml) {
+  const byMc = new Map();
+  const add = (mc, version, artifact) => {
+    if (!mc) return;
+    const stable = !/alpha|beta|rc|snapshot/i.test(version);
+    const cur = byMc.get(mc);
+    const better = !cur || (stable && !cur.stable) || (stable === cur.stable && compareVersions(version.replace(/^1\.20\.1-/, ''), cur.version.replace(/^1\.20\.1-/, '')) > 0);
+    if (better) byMc.set(mc, { mc, version, artifact, stable });
+  };
+  for (const v of mavenVersions(xml)) add(neoforgeMc(v), v, 'neoforge');
+  for (const v of mavenVersions(legacyXml || '')) if (/^1\.20\.1-/.test(v)) add('1.20.1', v, 'forge');
+  return byMc;
+}
+
+async function neoforgeList() {
+  return cached('neoforge', async () => {
+    const [xml, legacy] = await Promise.all([getText(NEOFORGE_META), getText(NEOFORGE_LEGACY_META).catch(() => '')]);
+    return neoforgeBuilds(xml, legacy);
+  });
+}
+
+async function listNeoForge() {
+  const builds = await neoforgeList();
+  const versions = [...builds.keys()].sort((a, b) => compareVersions(b, a));
+  if (!versions.length) throw new Error('NeoForge 버전 목록 없음');
+  const stable = versions.find((v) => builds.get(v).stable);
+  return { versions, latest: stable || versions[0] };
+}
+
+/** NeoForge 도 설치 프로그램을 받아 --installServer 로 설치한다 */
+async function neoforgeInstaller(mc) {
+  const pick = (await neoforgeList()).get(mc);
+  if (!pick) throw new Error(`${mc} 용 NeoForge 없음`);
+  const name = `${pick.artifact}-${pick.version}-installer.jar`;
+  return { installer: true, url: `${NEOFORGE_MAVEN}/${pick.artifact}/${pick.version}/${name}`, fileName: name, loader: pick.version, build: pick.version };
+}
+
 // ---------- 하이브리드 (플러그인 + 모드): Arclight Forge 판 ----------
 // GitHub 릴리스의 파일 이름: arclight-forge-<마크 버전>-<빌드>.jar
 const ARCLIGHT_RELEASES = 'https://api.github.com/repos/IzzelAliz/Arclight/releases?per_page=100';
@@ -169,6 +229,7 @@ async function hybridJar(mc) {
 
 async function listVersions(type) {
   if (type === 'hybrid') return listHybrid();
+  if (type === 'neoforge') return listNeoForge();
   if (type === 'paper') return listPaper();
   if (type === 'fabric') return listFabric();
   if (type === 'forge') return listForge();
@@ -244,6 +305,7 @@ async function vanillaJar(mc) {
 
 async function serverJar(type, mc) {
   if (type === 'hybrid') return hybridJar(mc);
+  if (type === 'neoforge') return neoforgeInstaller(mc);
   if (type === 'paper') return paperBuild(mc);
   if (type === 'fabric') return fabricJar(mc);
   if (type === 'forge') return forgeInstaller(mc);
@@ -251,6 +313,8 @@ async function serverJar(type, mc) {
 }
 
 module.exports = {
+  neoforgeMc,
+  neoforgeBuilds,
   arclightAssets,
   forgePromos,
   pickForgeBuild,

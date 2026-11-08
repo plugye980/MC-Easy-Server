@@ -277,3 +277,24 @@ test('비정상 종료 알림에 마지막 오류 줄', () => {
   // 지난 실행 줄은 보지 않는다
   assert.strictEqual(lastErrorLine([{ t: t - 1000, line: 'java.lang.Error: old', kind: 'out' }], t), null);
 });
+
+test('NeoForge 서버 켜기: 설치된 인자 파일로 실행', { skip: process.platform === 'win32' }, async () => {
+  const id = 'srv-neo';
+  const dir = paths.serverDir(id);
+  fs.mkdirSync(path.join(dir, 'libraries/net/neoforged/neoforge/21.1.77'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'libraries/net/neoforged/neoforge/21.1.77/unix_args.txt'), '-cp x Main');
+  fs.writeFileSync(path.join(dir, 'server.properties'), 'server-port=25988\n');
+  Servers.save({ id, name: 'neo', type: 'neoforge', version: '1.21.1', build: '21.1.77', javaMajor: 21, memoryMb: 1024, port: 25988, optimize: false, levelName: 'world', addons: [], backup: { enabled: false, keep: 5, onStop: false }, network: { mode: 'tunnel', address: null } });
+  const m = new ServerManager();
+  const lines = [];
+  m.on('console', (c) => lines.push(c.line));
+  await m.start(id);
+  await until(() => m.get(id).status === 'running');
+  const launch = lines.find((l) => l.startsWith('▶'));
+  assert.ok(launch.includes('@libraries/net/neoforged/neoforge/21.1.77/unix_args.txt'));
+  assert.ok(launch.includes('-Dterminal.jline=false'));
+  await m.stop(id);
+  // 인자 파일이 없으면 다시 설치하라고 안내
+  fs.rmSync(path.join(dir, 'libraries'), { recursive: true });
+  await assert.rejects(m.start(id), /NeoForge 실행 파일 없음/);
+});

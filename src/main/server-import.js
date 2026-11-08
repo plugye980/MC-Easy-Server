@@ -5,7 +5,7 @@ const path = require('path');
 const props = require('./properties');
 const world = require('./world');
 const { readEntries } = require('./addon-meta');
-const { compareVersions } = require('./versions');
+const { compareVersions, neoforgeMc } = require('./versions');
 
 const MC_VERSION = /^\d+\.\d+(?:\.\d+)?$/;
 
@@ -139,11 +139,17 @@ async function detect(dir) {
   // Forge / NeoForge: 설치 때 만든 libraries 폴더로 정확한 버전을 안다 (로더 본체 폴더만 본다)
   if (!bukkitJar) {
     const lib = (...p) => path.join(dir, 'libraries', 'net', ...p);
-    if (fs.existsSync(lib('neoforged', 'neoforge')) || fs.existsSync(lib('neoforged', 'forge'))) {
-      out.problems.push('NeoForge 서버는 아직 지원하지 않음');
-      return out;
+    // NeoForge: libraries/net/neoforged/neoforge/21.1.77 (1.20.1 은 net/neoforged/forge/1.20.1-47.1.x)
+    const neoDirs = listDir(lib('neoforged', 'neoforge')).filter((e) => e.isDirectory() && /^\d+\.\d+/.test(e.name)).map((e) => e.name);
+    const neoLegacy = listDir(lib('neoforged', 'forge')).filter((e) => e.isDirectory() && /^1\.20\.1-/.test(e.name)).map((e) => e.name);
+    if (neoDirs.length || neoLegacy.length) {
+      const pick = neoDirs.sort((a, b) => compareVersions(b, a))[0] || neoLegacy.sort((a, b) => compareVersions(b.slice(7), a.slice(7)))[0];
+      type = 'neoforge';
+      flavor = 'NeoForge';
+      version = neoDirs.length ? neoforgeMc(pick) : '1.20.1';
+      build = pick;
     }
-    const forgeDirs = listDir(lib('minecraftforge', 'forge')).filter((e) => e.isDirectory() && /^\d+\.\d+(?:\.\d+)?-/.test(e.name)).map((e) => e.name);
+    const forgeDirs = type ? [] : listDir(lib('minecraftforge', 'forge')).filter((e) => e.isDirectory() && /^\d+\.\d+(?:\.\d+)?-/.test(e.name)).map((e) => e.name);
     if (forgeDirs.length) {
       const pick = forgeDirs.sort((a, b) => compareVersions(b.split('-')[0], a.split('-')[0]))[0];
       const [mc, ...rest] = pick.split('-');

@@ -1,5 +1,7 @@
 'use strict';
-// Forge 서버 설치 · 실행 방법 찾기
+// Forge · NeoForge 서버 설치 · 실행 방법 찾기
+//   NeoForge 실행: java <옵션> @libraries/net/neoforged/neoforge/<빌드>/<unix|win>_args.txt nogui
+//                  (1.20.1 만 libraries/net/neoforged/forge/1.20.1-47.1.x/)
 //   설치: java -jar forge-<mc>-<build>-installer.jar --installServer  (라이브러리와 바닐라 서버를 받아 둔다)
 //   실행: 1.17+  → java <옵션> @libraries/net/minecraftforge/forge/<mc>-<build>/<unix|win>_args.txt nogui
 //         ~1.16  → java <옵션> -jar forge-<mc>-<build>.jar nogui
@@ -29,10 +31,10 @@ function runInstaller(serverDir, javaBin, installerFile, onLine = () => {}) {
     };
     proc.stdout.on('data', onData);
     proc.stderr.on('data', onData);
-    proc.on('error', (e) => reject(new Error(`Forge 설치 실행 실패: ${e.message}`)));
+    proc.on('error', (e) => reject(new Error(`설치 프로그램 실행 실패: ${e.message}`)));
     proc.on('exit', (code) => {
       if (code === 0) resolve();
-      else reject(new Error(`Forge 설치 실패 (코드 ${code}) — ${tail.slice(-3).join(' / ')}`));
+      else reject(new Error(`모드 로더 설치 실패 (코드 ${code}) — ${tail.slice(-3).join(' / ')}`));
     });
   });
 }
@@ -58,4 +60,19 @@ function launchArgs(serverDir, mc, build, platform = process.platform) {
   return pick ? ['-jar', pick] : null;
 }
 
-module.exports = { runInstaller, cleanupInstaller, launchArgs };
+/** 설치된 NeoForge 를 켜는 인자. 못 찾으면 null */
+function neoforgeLaunchArgs(serverDir, build, platform = process.platform) {
+  const file = `${platform === 'win32' ? 'win' : 'unix'}_args.txt`;
+  for (const artifact of ['neoforge', 'forge']) {
+    const argsFile = `libraries/net/neoforged/${artifact}/${build}/${file}`;
+    if (fs.existsSync(path.join(serverDir, argsFile))) return [`@${argsFile}`];
+  }
+  return null;
+}
+
+/** 서버 종류에 맞게 */
+function loaderLaunchArgs(type, serverDir, mc, build, platform = process.platform) {
+  return type === 'neoforge' ? neoforgeLaunchArgs(serverDir, build, platform) : launchArgs(serverDir, mc, build, platform);
+}
+
+module.exports = { runInstaller, cleanupInstaller, launchArgs, neoforgeLaunchArgs, loaderLaunchArgs };
