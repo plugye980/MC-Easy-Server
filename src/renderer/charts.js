@@ -1,8 +1,7 @@
 'use strict';
-/* 그래프 — "형태 없는 결" 웹 프리뷰와 같은 어법
-   - 면적 그래프: 한 단 낮은 판 위에 고원(plateau) 면 → 능선 그늘 → 능선 빛 → 계단 2단(면·그늘·끝선·빛) → 능선 → 마디
-     면에는 아주 옅은 색수차, 판 안쪽에 큰 캡션과 시간 눈금
-   - 원호 게이지: 270° 홈(빛 → 그늘 → 바닥) 위에 발광 호, 가운데 숫자 */
+/* 그래프 — SCRF 테마
+   - 면적 그래프: 꺼진 바닥 위의 가로 눈금, 옅은 코발트 면과 코발트 선, 지금 값 점, 한도는 금색 선 하나
+   - 원호 게이지: 270° 눈금 홈 위에 코발트 호, 가운데 고정폭 숫자. 발광·색수차는 쓰지 않는다(평소 화면은 조용하게) */
 (function () {
   const { svg } = window.UI;
   let uid = 0;
@@ -37,7 +36,7 @@
   const stop = (offset, color, opacity) => svg('stop', { offset, 'stop-color': color, 'stop-opacity': opacity });
 
   /**
-   * 면적 그래프
+   * 면적 그래프 — SCRF 어법: 옅은 코발트 면 + 코발트 선 + 지금 값 점, 할당 한도는 금색 선 하나
    * @param {{max:number, min?:number, tag?:string, axis?:(n:number)=>[string,string]}} o
    *   axis: 점 개수를 받아 [왼쪽 눈금, 가운데 눈금] 글자를 돌려준다
    */
@@ -49,24 +48,22 @@
     const defs = svg(
       'defs',
       {},
-      svg('linearGradient', { id: `${id}-plateau`, x1: 0, y1: 0, x2: 0, y2: 1 }, stop('0%', 'var(--tier-1)'), stop('62%', 'var(--tier-1)'), stop('100%', 'var(--face-b)')),
-      svg('linearGradient', { id: `${id}-line`, x1: 0, y1: 0, x2: 1, y2: 0 }, stop('0%', 'var(--r1)'), stop('52%', 'var(--r2)'), stop('100%', 'var(--r3)')),
-      svg('linearGradient', { id: `${id}-deep`, x1: 0, y1: 0, x2: 1, y2: 0 }, stop('0%', 'var(--d1)'), stop('52%', 'var(--d2)'), stop('100%', 'var(--d3)')),
+      svg('linearGradient', { id: `${id}-face`, x1: 0, y1: 0, x2: 0, y2: 1 }, stop('0%', 'var(--accent)', 0.2), stop('100%', 'var(--accent)', 0)),
+      svg('linearGradient', { id: `${id}-line`, x1: 0, y1: 0, x2: 1, y2: 0 }, stop('0%', 'var(--scrf-gray-2)'), stop('55%', 'var(--scrf-cobalt-light)'), stop('100%', 'var(--accent)')),
     );
     const P = (cls, attrs = {}) => svg('path', { class: cls, fill: 'none', ...attrs });
-    const face = P('face', { fill: `url(#${id}-plateau)` });
-    const shade = P('ridge-shade');
-    const lit = P('ridge-lit');
-    const steps = ['step-b', 'step-c'].map((k) => ({ face: P(`step-face ${k}`, { fill: null }), shade: P('step-shade'), edge: P('step-edge'), lit: P('step-lit') }));
+    const grid = P('v-grid');
+    const ceil = P('v-ceil');
+    const face = P('face', { fill: `url(#${id}-face)` });
     const line = P('ridge', { stroke: `url(#${id}-line)` });
-    const markA = P('ridge-mark', { stroke: `url(#${id}-deep)` });
-    const markB = P('ridge-mark ridge-mark-b', { stroke: `url(#${id}-deep)` });
-    const tag = svg('text', { class: 'v-tag', 'text-anchor': 'end' });
+    const now = svg('circle', { class: 'v-now', r: 4 });
+    const tag = svg('text', { class: 'v-tag' });
     tag.textContent = o.tag || '';
     const axisL = svg('text', { class: 'v-axis' });
     const axisM = svg('text', { class: 'v-axis', 'text-anchor': 'middle' });
-    root.append(defs, face, shade, lit, ...steps.flatMap((s) => [s.face, s.shade, s.edge, s.lit]), line, markA, markB, tag, axisL, axisM);
-    const all = [face, shade, lit, line, markA, markB, ...steps.flatMap((s) => [s.face, s.shade, s.edge, s.lit])];
+    const axisR = svg('text', { class: 'v-axis', 'text-anchor': 'end' });
+    axisR.textContent = '지금';
+    root.append(defs, grid, ceil, face, line, now, tag, axisL, axisM, axisR);
 
     let last = [];
     root.update = (values) => {
@@ -77,56 +74,47 @@
         H = box.height;
         root.setAttribute('viewBox', `0 0 ${W} ${H}`);
       }
-      tag.setAttribute('x', W - 18);
-      tag.setAttribute('y', H - 16);
-      axisL.setAttribute('x', 18);
-      axisL.setAttribute('y', H - 16);
+      const top = 34;
+      const bottom = H - 34;
+      tag.setAttribute('x', 16);
+      tag.setAttribute('y', 22);
+      axisL.setAttribute('x', 16);
+      axisL.setAttribute('y', H - 12);
       axisM.setAttribute('x', W / 2);
-      axisM.setAttribute('y', H - 16);
+      axisM.setAttribute('y', H - 12);
+      axisR.setAttribute('x', W - 16);
+      axisR.setAttribute('y', H - 12);
+      // 가로 눈금 네 줄 (한도 · 3/4 · 1/2 · 1/4)
+      let gd = '';
+      for (const f of [0.25, 0.5, 0.75, 1]) {
+        const y = (bottom - (bottom - top) * f).toFixed(1);
+        gd += `M0,${y} L${W},${y} `;
+      }
+      grid.setAttribute('d', gd);
+      ceil.setAttribute('d', `M0,${top} L${W},${top}`);
 
       let vals = values.filter((v) => v !== null && v !== undefined);
-      if (vals.length === 1) vals = [vals[0], vals[0]]; // 첫 측정값 하나만 있어도 평평한 능선
-      vals = bucket(vals, Math.max(6, Math.min(24, Math.round(W / 45))));
+      if (vals.length === 1) vals = [vals[0], vals[0]]; // 첫 측정값 하나만 있어도 평평한 선
+      vals = bucket(vals, Math.max(8, Math.min(40, Math.round(W / 24))));
       const [aL, aM] = o.axis ? o.axis(values.length) : ['', ''];
       axisL.textContent = vals.length ? aL : '';
       axisM.textContent = vals.length ? aM : '';
+      axisR.style.display = vals.length ? '' : 'none';
       if (vals.length < 2) {
-        for (const p of all) p.setAttribute('d', '');
+        for (const p of [face, line]) p.setAttribute('d', '');
+        now.style.display = 'none';
         return;
       }
       const min = o.min ?? 0;
       const max = Math.max(o.max || 0, ...vals) || 1;
-      // 위 18% ~ 아래 30% 사이에 능선을 두어 계단과 캡션이 들어갈 자리를 남긴다
-      const top = H * 0.16;
-      const span = H * 0.5;
-      const pts = vals.map((v, i) => [(i / (vals.length - 1)) * W, top + (1 - (v - min) / (max - min)) * span]);
+      const pts = vals.map((v, i) => [(i / (vals.length - 1)) * W, bottom - ((v - min) / (max - min)) * (bottom - top)]);
       const d = smoothPath(pts);
-      const close = (dd, p) => `${dd} L${p[p.length - 1][0].toFixed(1)},${H} L${p[0][0].toFixed(1)},${H} Z`;
-      face.setAttribute('d', close(d, pts));
-      for (const p of [shade, lit, line]) p.setAttribute('d', d);
-
-      // 계단: 능선 아래로 11~26px 사이에서 물결치듯 어긋나게 (일정한 간격은 계단, 어긋난 간격은 지형)
-      const k = H / 300;
-      let prev = pts.map(([x]) => [x, 0]);
-      steps.forEach((s, si) => {
-        const sp = pts.map(([x, y], i) => {
-          const f = x / W;
-          const wave = 18 + 7 * Math.sin(f * 7.3 + si * 1.7) + 4 * Math.sin(f * 17.1 + si);
-          const off = (si === 0 ? 0 : prev[i][1]) + wave * k;
-          return [x, y + off];
-        });
-        prev = sp.map(([x, y], i) => [x, y - pts[i][1]]);
-        const sd = smoothPath(sp);
-        s.face.setAttribute('d', close(sd, sp));
-        for (const p of [s.shade, s.edge, s.lit]) p.setAttribute('d', sd);
-      });
-
-      // 마디: 곡선의 몇 구간만 같은 색 계열의 낮은 명도로 짚는다
-      const len = line.getTotalLength ? line.getTotalLength() : W;
-      markA.setAttribute('stroke-dasharray', `${(len * 0.2).toFixed(1)} 99999`);
-      markA.setAttribute('stroke-dashoffset', (-len * 0.3).toFixed(1));
-      markB.setAttribute('stroke-dasharray', `${(len * 0.12).toFixed(1)} 99999`);
-      markB.setAttribute('stroke-dashoffset', (-len * 0.72).toFixed(1));
+      face.setAttribute('d', `${d} L${W},${H} L0,${H} Z`);
+      line.setAttribute('d', d);
+      const [lx, ly] = pts[pts.length - 1];
+      now.style.display = '';
+      now.setAttribute('cx', (lx - 5).toFixed(1));
+      now.setAttribute('cy', ly.toFixed(1));
     };
     if (window.ResizeObserver) new ResizeObserver(() => root.update(last)).observe(root);
     return root;
@@ -144,9 +132,8 @@
     const num = svg('text', { class: 'g-num', x: 70, y: 78, 'text-anchor': 'middle' });
     const unit = svg('text', { class: 'g-unit', x: 70, y: 100, 'text-anchor': 'middle' });
     root.append(
-      svg('path', { class: 'track-lit', d: arc }),
-      svg('path', { class: 'track-shade', d: arc }),
-      svg('path', { class: 'track', d: arc }),
+      svg('path', { class: 'track', d: arc, pathLength: 100 }),
+      svg('path', { class: 'ticks', d: arc, pathLength: 100 }),
       value,
       num,
       unit,
