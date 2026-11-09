@@ -201,6 +201,33 @@
     });
   }
 
+  /* 테마 바꾸기 — 테마 버튼 자리에서 배경 패널이 번지듯 새 색으로 바뀌고, UI 판은 그동안 함께 천천히 색이 섞인다.
+     바뀌는 도중에 또 누르면 마지막으로 고른 테마만 기억했다가, 지금 전환이 끝난 뒤 이어서 바꾼다 */
+  let themeBusy = false;
+  let themeWant = null;
+  async function setTheme(theme) {
+    themeWant = theme;
+    state.settings = { ...state.settings, theme };
+    if (themeBusy) return;
+    themeBusy = true;
+    while (themeWant && themeWant !== root.dataset.theme) {
+      const next = themeWant;
+      if (!window.Scene) {
+        applyTheme(next);
+        break;
+      }
+      const seg = $('#paneFoot .seg');
+      const at = seg ? seg.getBoundingClientRect() : { left: 0, top: innerHeight, width: 0, height: 0 };
+      root.classList.add('theme-fade');
+      await Promise.all([window.Scene.refresh(at.left + at.width / 2, at.top + at.height / 2, () => applyTheme(next)), sleep(1700)]);
+      root.classList.remove('theme-fade');
+      if (live.updateMetrics) live.updateMetrics();
+    }
+    themeWant = null;
+    themeBusy = false;
+    // 창 제목 줄(운영체제가 그린다)은 패널이 다 바뀐 뒤에 바꾼다 — 먼저 바뀌면 어색하다
+    state.settings = (await call('app:setSettings', { theme: root.dataset.theme })) || state.settings;
+  }
   function applyTheme(theme) {
     document.documentElement.dataset.theme = theme === 'dark' ? 'dark' : 'light';
   }
@@ -339,6 +366,12 @@
         ),
       );
       if (live.refreshCreate) live.refreshCreate();
+      // 처음 그릴 때는 잠금 상태로 바로 둔다 (코발트에서 회색으로 넘어가는 연출은 동의를 바꿀 때만)
+      const go = $('#createGo');
+      if (go) {
+        go.classList.add('is-fresh');
+        requestAnimationFrame(() => requestAnimationFrame(() => go.classList.remove('is-fresh')));
+      }
     } else {
       put($('#side'),
         h(
@@ -358,35 +391,7 @@
           { value: 'dark', label: '어둡게' },
         ],
         state.settings.theme,
-        async (theme) => {
-          // 패널 새로 고침 — 테마 버튼 자리에서 충격파가 퍼지며 지나간 칸이 새 색으로 바뀐다
-          const at = $('#paneFoot .seg').getBoundingClientRect();
-          if (window.Scene) {
-            // 판(UI 창)은 옛 색을 붙든 채 있다가, 배경 패널이 판 가운데까지 바뀌면 그때 바뀐다
-            const old = root.dataset.theme;
-            const panes = [...document.querySelectorAll('.pane')].filter((p) => p.offsetParent !== null || getComputedStyle(p).display !== 'none');
-            for (const p of panes) p.dataset.theme = old;
-            const done = window.Scene.refresh(at.left + at.width / 2, at.top + at.height / 2, () => applyTheme(theme));
-            for (const p of panes) {
-              const r = p.getBoundingClientRect();
-              setTimeout(() => {
-                p.dataset.theme = theme;
-                p.classList.remove('is-refreshing');
-                void p.offsetWidth;
-                p.classList.add('is-refreshing');
-              }, window.Scene.refreshDelay(r.left + r.width / 2, r.top + r.height / 2));
-            }
-            await done;
-            await sleep(450);
-            for (const p of panes) {
-              delete p.dataset.theme;
-              p.classList.remove('is-refreshing');
-            }
-          } else applyTheme(theme);
-          if (live.updateMetrics) live.updateMetrics();
-          // 창 제목 줄(운영체제가 그린다)은 패널이 다 바뀐 뒤에 바꾼다 — 먼저 바뀌면 어색하다
-          state.settings = (await call('app:setSettings', { theme })) || state.settings;
-        },
+        (theme) => setTheme(theme),
         { name: '테마' },
       ),
     );
@@ -1801,6 +1806,7 @@
       const btn = $('#createGo');
       if (!btn) return;
       btn.disabled = !c.eula || !c.version || c.busy;
+      btn.classList.toggle('is-locked', !c.eula);
       btn.title = !c.eula ? 'EULA 동의 필요' : !c.version ? '버전 선택 필요' : '';
     };
     live.refreshCreate = refreshCreate;
@@ -2152,11 +2158,15 @@
       const btn = $('#createGo');
       if (btn) {
         btn.disabled = !ok || g.busy || !(g.eula || (d && d.eula));
+        btn.classList.toggle('is-locked', !!(ok && !(g.eula || d.eula)));
         btn.title = !ok ? '서버 폴더 선택 필요' : '';
       }
       live.refreshCreate = () => {
         const b2 = $('#createGo');
-        if (b2) b2.disabled = !ok || g.busy || !(g.eula || (d && d.eula));
+        if (b2) {
+          b2.disabled = !ok || g.busy || !(g.eula || (d && d.eula));
+          b2.classList.toggle('is-locked', !!(ok && !(g.eula || d.eula)));
+        }
       };
       // 이 폴더에 동의 기록이 없을 때만 왼쪽 위에 EULA 동의를 띄운다
       const wantEula = ok && !d.eula;
