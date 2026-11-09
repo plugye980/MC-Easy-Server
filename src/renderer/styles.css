@@ -23,6 +23,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { height: 100%; margin: 0; }
 
 body {
@@ -731,3 +732,7 @@ input[type="number"].field { font-family: var(--mono); }
 :root[data-ui="exit"] .pane { animation: exitDown 0.7s var(--ease) both; }
 :root[data-ui="exit"] .pane-r { animation-delay: 0.06s; }
 @keyframes exitDown { to { opacity: 0; translate: 0 70px; filter: blur(8px); } }
+
+/* 테마 전환: 배경 패널이 판 자리까지 바뀌면 판도 잠깐 밝아졌다가 새 색으로 */
+.pane.is-refreshing { animation: paneRefresh 0.42s var(--ease); }
+@keyframes paneRefresh { 0% { filter: brightness(1); } 35% { filter: brightness(1.35) saturate(0.7); } 100% { filter: none; } }

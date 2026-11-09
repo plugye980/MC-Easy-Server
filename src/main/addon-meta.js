@@ -65,6 +65,7 @@ function parseModsToml(text, manifest) {
   // 접속하는 쪽에서만 필요한 의존성(side = "CLIENT")은 서버에서 따지지 않는다
   const serverSide = (d) => String(d.side || 'BOTH').toUpperCase() !== 'CLIENT';
   const mc = deps.find((d) => d.modId === 'minecraft');
+  const neo = deps.find((d) => d.modId === 'neoforge');
   return {
     // NeoForge 1.20.2~1.20.4 모드는 mods.toml 을 쓰지만 neoforge 에 의존한다
     kind: deps.some((d) => d.modId === 'neoforge') ? 'neoforge' : 'forge',
@@ -72,6 +73,7 @@ function parseModsToml(text, manifest) {
     name: mod.displayName || id,
     version,
     mcRange: mc ? String(mc.versionRange || '') : null,
+    neoRange: neo && neo.versionRange ? String(neo.versionRange) : null,
     depends: [...new Set(deps.filter((d) => required(d) && serverSide(d) && !['minecraft', 'forge', 'neoforge', 'java', ...ids].includes(d.modId)).map((d) => d.modId))],
     provides: ids.slice(1),
   };
@@ -79,7 +81,8 @@ function parseModsToml(text, manifest) {
 
 /** Maven 버전 범위: "[1.20.1,1.21)", "[1.20,)", "[1.20.1]", 여러 구간은 "[...],[...]" · 괄호 없는 값은 그 버전 이상 */
 function matchesMavenRange(range, mc) {
-  const r = String(range || '').trim();
+  // "[1.21,1.21z)" 처럼 숫자 뒤에 글자를 붙인 상한은 "1.21 계열 전부"라는 뜻으로 쓰인다
+  const r = String(range || '').trim().replace(/(\d)[a-z]+(?=\s*[,\])])/gi, '$1.999999');
   if (!r || r === '*') return true;
   if (!/[[(]/.test(r)) return compareVersions(mc, r) >= 0;
   const sets = [...r.matchAll(/([[(])([^\])]*)([\])])/g)];
@@ -265,7 +268,13 @@ async function inspect(file) {
     } catch { /* 무시 */ }
     return { kind: 'datapack', name: null, packFormat: pack.pack_format || null, depends: [] };
   }
-  return { kind: null, error: /\.jar(\.disabled)?$/i.test(file) ? '모드 정보 없는 jar — 다른 모드가 쓰는 라이브러리일 수 있음' : '플러그인·모드 정보 파일 없음' };
+  let provides = [];
+  if (entries['META-INF/jarjar/metadata.json']) {
+    try {
+      provides = (JSON.parse(entries['META-INF/jarjar/metadata.json']).jars || []).map((j) => (j.identifier && j.identifier.artifact) || '').filter(Boolean);
+    } catch { /* 무시 */ }
+  }
+  return { kind: null, provides, error: /\.jar(\.disabled)?$/i.test(file) ? '모드 정보 없는 jar — 다른 모드가 쓰는 라이브러리일 수 있음' : '플러그인·모드 정보 파일 없음' };
 }
 
 // ---------- Fabric 버전 범위 ("~1.21", ">=1.21.1 <1.21.4", "1.21.x", ["1.21", "1.21.1"]) ----------
@@ -325,6 +334,36 @@ function forServer(meta, serverType) {
   return { ...meta.variants[want], variants: meta.variants };
 }
 
+/** NeoForge 버전 범위 → 마인크래프트 범위: "[21.1.238,)" → "[1.21.1,)", "[20,)" → "[1.20,)" */
+function neoToMc(v) {
+  const m = /^(\d+)(?:\.(\d+))?/.exec(String(v || '').trim());
+  if (!m) return null;
+  return !m[2] || m[2] === '0' ? `1.${m[1]}` : `1.${m[1]}.${m[2]}`;
+}
+function neoToMcRange(range) {
+  const r = String(range || '').trim();
+  const m = /^([[(])\s*([^,\])]*)\s*(?:,\s*([^\])]*))?\s*([\])])$/.exec(r);
+  if (!m) return null;
+  const lo = m[2] ? neoToMc(m[2]) : '';
+  const hi = m[3] ? neoToMc(m[3]) : '';
+  if (m[3] === undefined) return lo ? `[${lo}]` : null;
+  return `[${lo},${hi ? `${hi})` : ')'}`;
+}
+/**
+ * 범위 판정. 로더는 모드가 적은 마인크래프트 범위를 그대로 막지 않는 일이 많다
+ * (예: JEI 1.21.1 판이 "[1.21, 1.21.1)" 로 적혀 있어도 1.21.1 에서 돈다).
+ * 그래서 같은 계열(1.21.x)을 가리키는 범위는 빨간 "호환 안 됨" 대신 회색 안내로 둔다.
+ */
+function rangeVerdict(range, mc, derived) {
+  if (matchesMavenRange(range, mc)) return { status: 'ok', reason: null };
+  const line = (v) => String(v).split('.').slice(0, 2).join('.');
+  const nums = String(range).match(/\d+\.\d+(?:\.\d+)?/g) || [];
+  if (nums.some((n) => line(n) === line(mc))) {
+    return { status: 'unknown', reason: `${derived ? 'NeoForge 범위로 본 ' : ''}지원 범위 ${range} — 같은 ${line(mc)} 계열이라 대부분 그대로 돎` };
+  }
+  return { status: 'bad', reason: `마인크래프트 ${range} 전용` };
+}
+
 function compat(meta, serverType, mc) {
   meta = forServer(meta, serverType);
   if (!meta || !meta.kind) return { status: 'unknown', reason: (meta && meta.error) || '정보 없음' };
@@ -341,7 +380,7 @@ function compat(meta, serverType, mc) {
     if (meta.kind === 'neoforge') return { status: 'bad', reason: 'NeoForge 전용 모드', wrongType: true };
     if (meta.kind !== 'forge') return { status: 'bad', reason: 'Forge 모드 파일 아님', wrongType: true };
     if (!meta.mcRange) return { status: 'unknown', reason: '지원 버전 표시 없음' };
-    return matchesMavenRange(meta.mcRange, mc) ? { status: 'ok', reason: null } : { status: 'bad', reason: `마인크래프트 ${meta.mcRange} 전용` };
+    return rangeVerdict(meta.mcRange, mc, false);
   }
   if (serverType === 'neoforge') {
     if (meta.kind === 'plugin') return { status: 'bad', reason: '플러그인 파일 — 모드 서버에서 사용 불가', wrongType: true };
@@ -349,8 +388,10 @@ function compat(meta, serverType, mc) {
     // NeoForge 1.20.1 은 Forge 1.20.1 모드를 그대로 쓸 수 있다. 1.20.2 부터는 NeoForge 전용만
     if (meta.kind === 'forge' && mc !== '1.20.1') return { status: 'bad', reason: 'Forge 모드 — NeoForge 는 1.20.1 에서만 Forge 모드 사용 가능', wrongType: true };
     if (meta.kind !== 'neoforge' && meta.kind !== 'forge') return { status: 'bad', reason: 'NeoForge 모드 파일 아님', wrongType: true };
-    if (!meta.mcRange) return { status: 'unknown', reason: '지원 버전 표시 없음' };
-    return matchesMavenRange(meta.mcRange, mc) ? { status: 'ok', reason: null } : { status: 'bad', reason: `마인크래프트 ${meta.mcRange} 전용` };
+    // 마인크래프트 범위 대신 NeoForge 범위만 적은 모드가 많다 — NeoForge 21.1.x = 마인크래프트 1.21.1
+    const range = meta.mcRange || neoToMcRange(meta.neoRange);
+    if (!range) return { status: 'unknown', reason: '지원 버전 표시 없음' };
+    return rangeVerdict(range, mc, !meta.mcRange);
   }
   if (serverType === 'fabric') {
     if (meta.kind === 'forge' || meta.kind === 'neoforge') return { status: 'bad', reason: 'Forge 모드 — Fabric 서버에서 사용 불가', wrongType: true };
@@ -369,6 +410,13 @@ function compat(meta, serverType, mc) {
  * 설치된 것들 사이에서 빠진 의존성을 찾는다.
  * @param {{meta: object, title?: string, slug?: string}[]} all 설치된 전부 (켜진 것만 넘긴다)
  */
+// "sable-companion-common-1.21.1" → "sablecompanion", "kotlinforforge-5.12.0-all" → "kotlinforforge"
+function stem(x) {
+  let t = String(x || '').toLowerCase().replace(/\.(jar|zip)(\.disabled)?$/, '');
+  t = t.replace(/[-_+ ](v?\d[\w.+-]*)$/, '');
+  for (let i = 0; i < 3; i++) t = t.replace(/[-_ ](neo)?forge$|[-_ ]fabric$|[-_ ]quilt$|[-_ ]common$|[-_ ]all$|[-_ ]mc\d[\d.]*$|[-_ ]\d+\.\d+(\.\d+)?$/, '');
+  return t.replace(/[^a-z0-9]/g, '');
+}
 function missingDependencies(meta, all) {
   if (!meta || !meta.depends || !meta.depends.length) return [];
   const norm = (x) => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -376,7 +424,11 @@ function missingDependencies(meta, all) {
   let fabricApi = false;
   for (const a of all) {
     const m = a.meta || {};
-    for (const k of [m.id, m.name, a.title, a.slug, ...(m.provides || [])]) if (k) have.add(norm(k));
+    for (const k of [m.id, m.name, a.title, a.slug, a.fileName, ...(m.provides || [])]) {
+      if (!k) continue;
+      have.add(norm(k));
+      have.add(stem(k));
+    }
     if (m.id === 'fabric-api' || a.slug === 'fabric-api') fabricApi = true;
   }
   return meta.depends.filter((d) => {
@@ -386,4 +438,4 @@ function missingDependencies(meta, all) {
   });
 }
 
-module.exports = { forServer, inspect, javaVersion, compat, matchesRange, matchesMavenRange, parseModsToml, missingDependencies, readEntries };
+module.exports = { neoToMcRange, rangeVerdict, stem, forServer, inspect, javaVersion, compat, matchesRange, matchesMavenRange, parseModsToml, missingDependencies, readEntries };

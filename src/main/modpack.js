@@ -3,24 +3,14 @@
 //   CurseForge 모드팩 zip: manifest.json (minecraft.version, modLoaders, files[{projectID, fileID, required}]) + overrides/
 //   Modrinth 모드팩 .mrpack: modrinth.index.json (dependencies, files[{path, downloads, hashes, env}]) + overrides/ · server-overrides/
 // 모드 파일은 받아서 mods/ 에, overrides 안의 config·kubejs 등은 서버 폴더에 그대로 푼다.
-// 접속하는 쪽에서만 쓰는 모드(그래픽·화면 모드 등)는 서버를 멈추게 하므로 받은 뒤 꺼 둔다.
 const fs = require('fs');
 const path = require('path');
 const { Readable } = require('stream');
 const { pipeline } = require('stream/promises');
 const yauzl = require('yauzl');
 const { request } = require('./http');
-const addonMeta = require('./addon-meta');
 
 const CF_DOWNLOAD = (projectID, fileID) => `https://www.curseforge.com/api/v1/mods/${projectID}/files/${fileID}/download`;
-
-// 서버에서 돌리면 멈추는 대표적인 화면 전용 모드 (파일 안에 표시가 없는 경우를 위해)
-const CLIENT_ONLY_IDS = new Set([
-  'sodium', 'embeddium', 'rubidium', 'iris', 'oculus', 'optifine', 'entityculling', 'notenoughanimations', 'ambientsounds',
-  'dynamiclights', 'lambdynlights', 'skinlayers3d', '3dskinlayers', 'betterf3', 'controlling', 'mousetweaks', 'legendarytooltips',
-  'toastcontrol', 'fpsreducer', 'cameraoverhaul', 'zoomify', 'continuity', 'citresewn', 'fancymenu', 'drippyloadingscreen',
-  'immediatelyfast', 'enhancedvisuals', 'blur', 'betterthirdperson', 'customskinloader', 'reeses_sodium_options', 'sodiumextra',
-]);
 
 function openZip(file) {
   return new Promise((resolve, reject) => yauzl.open(file, { lazyEntries: true, autoClose: false }, (err, zip) => (err ? reject(err) : resolve(zip))));
@@ -160,20 +150,6 @@ async function fetchTo(url, folder, fixedName) {
   return dest;
 }
 
-/** 받은 모드가 접속하는 쪽 전용인지 (서버에 두면 멈춘다) */
-async function clientOnly(file) {
-  const meta = await addonMeta.inspect(file);
-  const kinds = meta.variants ? Object.values(meta.variants) : [meta];
-  if (kinds.some((v) => v.environment === 'client')) return true;
-  if (kinds.some((v) => v.id && CLIENT_ONLY_IDS.has(String(v.id).toLowerCase()))) return true;
-  try {
-    const entries = await addonMeta.readEntries(file, ['META-INF/mods.toml', 'META-INF/neoforge.mods.toml']);
-    const toml = entries['META-INF/neoforge.mods.toml'] || entries['META-INF/mods.toml'] || '';
-    if (/^\s*clientSideOnly\s*=\s*true/m.test(toml)) return true;
-  } catch { /* 읽을 수 없으면 그대로 둔다 */ }
-  return false;
-}
-
 /** 모드팩과 서버가 맞는지 — 안 맞으면 경고 문구 */
 function checkFit(pack, server) {
   const warnings = [];
@@ -212,7 +188,7 @@ async function install(file, serverDir, server, onProgress = () => {}) {
       try {
         const dest =
           pack.format === 'curseforge'
-            ? await fetchTo(CF_DOWNLOAD(f.projectID, f.fileID), modsDir)
+            ? await fetchTo(module.exports.cfDownload(f.projectID, f.fileID), modsDir)
             : await fetchTo(f.url, path.dirname(safeJoin(serverDir, f.path) || modsDir), path.basename(f.path));
         installed.push(dest);
       } catch (e) {
@@ -224,18 +200,41 @@ async function install(file, serverDir, server, onProgress = () => {}) {
   };
   await Promise.all(Array.from({ length: Math.min(4, total) }, worker));
 
-  // 접속하는 쪽 전용 모드는 꺼 둔다
-  onProgress({ text: '서버에서 쓸 수 없는 모드 확인 중', percent: 0.93 });
-  const disabled = [];
-  for (const dest of installed) {
-    if (!dest.startsWith(modsDir + path.sep)) continue;
-    if (await clientOnly(dest)) {
-      fs.renameSync(dest, `${dest}.disabled`);
-      disabled.push(path.basename(dest));
+  // CurseForge 목록에는 리소스팩·셰이더·데이터팩(zip)도 섞여 있고 넣을 폴더가 적혀 있지 않다.
+  // mods/ 에 두면 모드로 잘못 읽힌다 — 데이터팩은 월드의 datapacks/ 로, 서버가 쓰지 않는 리소스팩·셰이더는 건너뛴다
+  onProgress({ text: '데이터팩·리소스팩 나누는 중', percent: 0.95 });
+  let datapacks = 0;
+  let skipped = 0;
+  const levelName = (() => {
+    try {
+      const m = /^level-name=(.*)$/m.exec(fs.readFileSync(path.join(serverDir, 'server.properties'), 'utf8'));
+      return (m && m[1].trim()) || 'world';
+    } catch {
+      return 'world';
+    }
+  })();
+  for (const dest of installed.slice()) {
+    if (!/\.zip$/i.test(dest) || path.dirname(dest) !== modsDir) continue;
+    let names = [];
+    try {
+      const z = await listZip(dest);
+      names = z.entries.map((e) => e.fileName);
+      z.close();
+    } catch { /* 깨진 zip 은 건너뛴다 */ }
+    installed.splice(installed.indexOf(dest), 1);
+    if (names.some((n) => n.startsWith('data/')) && names.includes('pack.mcmeta')) {
+      const dp = safeJoin(serverDir, path.join(levelName, 'datapacks'));
+      fs.mkdirSync(dp, { recursive: true });
+      fs.renameSync(dest, path.join(dp, path.basename(dest)));
+      datapacks++;
+    } else {
+      fs.rmSync(dest, { force: true });
+      skipped++;
     }
   }
   onProgress({ text: `${pack.name} 설치 완료`, percent: 1 });
-  return { name: pack.name, version: pack.version, format: pack.format, mods: installed.length - disabled.length, disabled, failed, overrides, warnings };
+  return { name: pack.name, version: pack.version, format: pack.format, mods: installed.length, datapacks, skipped, failed, overrides, warnings };
 }
 
-module.exports = { read, install, parseLoader, checkFit, CF_DOWNLOAD };
+// cfDownload 는 시험에서 바꿔 끼울 수 있게 내보낸다
+module.exports = { read, install, parseLoader, checkFit, CF_DOWNLOAD, cfDownload: CF_DOWNLOAD };

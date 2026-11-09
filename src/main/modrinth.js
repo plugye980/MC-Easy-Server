@@ -347,7 +347,8 @@ function scanFolder(server, serverDir) {
   const known = new Set((server.addons || []).flatMap((a) => [a.fileName, `${a.fileName}.disabled`]));
   return fs
     .readdirSync(folder)
-    .filter((f) => /\.(jar|zip)(\.disabled)?$/i.test(f) && !known.has(f))
+    // 데이터팩 폴더만 zip 을 받는다. mods/·plugins/ 의 zip 은 리소스팩 같은 다른 파일이다
+    .filter((f) => (server.type === 'vanilla' ? /\.zip(\.disabled)?$/i : /\.jar(\.disabled)?$/i).test(f) && !known.has(f))
     .map((f) => ({
       manual: true,
       title: f.replace(/\.(jar|zip)(\.disabled)?$/i, ''),
