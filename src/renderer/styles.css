@@ -278,6 +278,21 @@ p { margin: 0; line-height: 1.6; color: var(--ink-2); }
 .eula-read:hover { box-shadow: inset 0 -1px 0 var(--accent); }
 .create-go:disabled { cursor: default; filter: saturate(0.55) brightness(0.98); box-shadow: none; }
 .create-go:disabled .create-go-line { opacity: 0.4; }
+/* EULA 동의 전 — 색을 빼고 유리 무늬를 옅게. 동의하면 코발트 유리로 천천히 돌아온다 */
+.create-go-art { transition: filter 0.7s var(--ease); }
+.create-go-art::after {
+  content: ""; position: absolute; inset: 0; opacity: 0;
+  background: linear-gradient(100deg, #7c8391 0%, #8d94a1 55%, #a0a6b1 100%);
+  transition: opacity 0.7s var(--ease);
+}
+[data-theme="dark"] .create-go-art::after { background: linear-gradient(100deg, #2b303a 0%, #343a45 55%, #3e4450 100%); }
+.create-go.is-locked .create-go-art { filter: saturate(0) brightness(1.05); }
+.create-go.is-locked .create-go-art::after { opacity: 0.82; }
+.create-go.is-locked:disabled { filter: none; }
+.create-go.is-fresh .create-go-art, .create-go.is-fresh .create-go-art::after, .create-go.is-fresh span { transition: none; }
+.create-go-code, .create-go-text { transition: opacity 0.7s var(--ease); }
+.create-go.is-locked .create-go-code { opacity: 0.6; }
+.create-go.is-locked .create-go-text { opacity: 0.85; }
 
 /* 서버 페이지 — 뒤로 나가기 */
 .back {
@@ -734,5 +749,39 @@ input[type="number"].field { font-family: var(--mono); }
 @keyframes exitDown { to { opacity: 0; translate: 0 70px; filter: blur(8px); } }
 
 /* 테마 전환: 배경 패널이 판 자리까지 바뀌면 판도 잠깐 밝아졌다가 새 색으로 */
-.pane.is-refreshing { animation: paneRefresh 0.42s var(--ease); }
-@keyframes paneRefresh { 0% { filter: brightness(1); } 35% { filter: brightness(1.35) saturate(0.7); } 100% { filter: none; } }
+/* ═══════════ 테마 전환 — UI 색은 배경 패널과 함께 천천히 섞이며 바뀐다 ═══════════
+   색 토큰을 <color> 로 등록해 두면 토큰 값이 바뀔 때 그 사이 색으로 이어진다.
+   :root 는 그대로 두고(배경 장면은 새 색을 바로 읽는다) UI 쪽에서만 섞는다. */
+@property --ink { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --ink-2 { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --mute { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --faint { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --accent { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --accent-text { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --accent-soft { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --accent-glow { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --gold { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --gold-text { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --warn-text { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --bad { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --bad-text { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --bad-soft { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --surface { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --surface-solid { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --sunk { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --sunk-2 { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --line { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --line-2 { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --hover { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --overlay { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --chip-bg { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --chip-ink { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --vignette-a { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --vignette-b { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --pane-bg { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --pane-floor { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --tab-on { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --tab-off { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --tab-off-num { syntax: "<color>"; inherits: true; initial-value: transparent; }
+:root { --theme-fade: 1.5s cubic-bezier(0.45, 0, 0.25, 1) 0.1s; }
+.theme-fade .ui, .theme-fade .lens > *, .theme-fade .toasts, .theme-fade .overlay { transition: --ink var(--theme-fade), --ink-2 var(--theme-fade), --mute var(--theme-fade), --faint var(--theme-fade), --accent var(--theme-fade), --accent-text var(--theme-fade), --accent-soft var(--theme-fade), --accent-glow var(--theme-fade), --gold var(--theme-fade), --gold-text var(--theme-fade), --warn-text var(--theme-fade), --bad var(--theme-fade), --bad-text var(--theme-fade), --bad-soft var(--theme-fade), --surface var(--theme-fade), --surface-solid var(--theme-fade), --sunk var(--theme-fade), --sunk-2 var(--theme-fade), --line var(--theme-fade), --line-2 var(--theme-fade), --hover var(--theme-fade), --overlay var(--theme-fade), --chip-bg var(--theme-fade), --chip-ink var(--theme-fade), --vignette-a var(--theme-fade), --vignette-b var(--theme-fade), --pane-bg var(--theme-fade), --pane-floor var(--theme-fade), --tab-on var(--theme-fade), --tab-off var(--theme-fade), --tab-off-num var(--theme-fade); }

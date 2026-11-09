@@ -825,6 +825,10 @@
     const h = fx.src.c.height;
     const sg = fx.src.g;
     sg.clearRect(0, 0, w, h);
+    if (small.width !== w || small.height !== h) {
+      small.width = w;
+      small.height = h;
+    }
     sctx.drawImage(canvas, 0, 0, w, h);
     sg.filter = 'blur(0.9px)';
     sg.drawImage(small, 0, 0);
@@ -1973,7 +1977,7 @@
   /* ════════════ 새로 고침 — 누른 자리에서 충격파가 퍼지며, 지나간 칸이 새 화면으로 바뀐다 (테마 전환) ════════════ */
   const oldSnap = document.createElement('canvas');
   const oldSnapG = oldSnap.getContext('2d');
-  const wave = { on: false, t0: 0, o: [0, 0], v: 2.2, done: null };
+  const wave = { on: false, t0: 0, o: [0, 0], v: 1.45, dur: 640, done: null };
   /* 패널 하나하나가 새로 고쳐진다: 누른 자리에서 가까운 칸부터(묶음마다 조금씩 어긋나게) 잠깐 밝아졌다가 새 색으로 바뀐다.
      칸 모양(평면 삼각형)으로 나누므로 화면이 정확히 칸 단위로 바뀐다. */
   function drawRefresh(now) {
@@ -1985,8 +1989,8 @@
     eachCell((r, kk, tt, j) => {
       const T = tri(r, kk, tt);
       const c = centroid(T);
-      const delay = Math.hypot(c[0] - wave.o[0], c[1] - wave.o[1]) / wave.v + groupOf(r, kk, j, c).h * 260;
-      const u = (t - delay) / 380;
+      const delay = Math.hypot(c[0] - wave.o[0], c[1] - wave.o[1]) / wave.v + groupOf(r, kk, j, c).h * 380;
+      const u = (t - delay) / wave.dur;
       if (u < 1) pending = true;
       const a = 1 - easeIO(clamp01(u)); // 옛 화면이 남은 정도
       if (a > 0.05) addShape(bins[a > 0.9 ? 0 : a > 0.6 ? 1 : a > 0.3 ? 2 : 3], T);
@@ -2050,8 +2054,13 @@
     publishGeometry();
     dirty = true;
   }
+  let needRebuild = false;
   function frame() {
     requestAnimationFrame(frame);
+    if (needRebuild) {
+      needRebuild = false;
+      rebuild();
+    }
     const ddx = target.x - cur.x;
     const ddy = target.y - cur.y;
     if (Math.abs(ddx) + Math.abs(ddy) > 0.0006) {
@@ -2152,10 +2161,9 @@
     const gr = document.querySelector('.grain');
     if (gr) grain(gr);
     rebuild();
-    let pending = 0;
+    // 크기가 바뀌면 다음 프레임에서 다시 만든 뒤 같은 프레임에 바로 그린다 (따로 미루면 빈 캔버스가 한 번씩 보인다)
     window.addEventListener('resize', () => {
-      cancelAnimationFrame(pending);
-      pending = requestAnimationFrame(rebuild);
+      needRebuild = true;
     });
     new MutationObserver(repaint).observe(root, { attributes: true, attributeFilter: ['data-theme'] });
     if (document.fonts && document.fonts.ready) {
@@ -2231,13 +2239,6 @@
           res();
         };
       });
-    },
-    /** 새로 고침 중 화면의 한 점(clientX, clientY)이 새 색으로 바뀌기까지 남은 시간(ms) */
-    refreshDelay(clientX, clientY) {
-      const cxw = innerWidth / 2 + (clientX - innerWidth / 2) / SCALE;
-      const cyw = innerHeight / 2 + (clientY - innerHeight / 2) / SCALE;
-      const d = Math.hypot(cxw / k - wave.o[0], cyw / k - wave.o[1]);
-      return Math.max(0, d / wave.v + 130 - (performance.now() - wave.t0));
     },
     /** 새로 고침 — (clientX, clientY)에서 충격파가 퍼지며 지나간 칸이 새 화면으로. apply()가 화면을 바꾼다 */
     refresh(clientX, clientY, apply) {
