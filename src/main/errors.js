@@ -215,6 +215,19 @@ const RULES = [
       actions: [],
     }),
   },
+  {
+    // 접속 준비(설정 단계) 중에 끊김 — 모드 서버에서는 대개 서버와 접속하는 쪽의 모드 구성이 달라서다.
+    // 진짜 이유("registries with unknown keys", "mismatched mod channel list" 등)는 접속하는 쪽 화면에만 뜬다
+    id: 'config-disconnect',
+    test: /ServerConfigurationPacketListenerImpl\]: .*? lost connection: (.*)$/,
+    cooldown: 5 * 60 * 1000,
+    build: (line, m) => ({
+      severity: 'warn',
+      title: '접속 준비 중 연결 끊김',
+      message: `접속하던 사람이 게임에 들어오기 전에 끊김 (${m[1].trim().slice(0, 80)}). 모드 서버라면 서버와 접속하는 쪽의 모드가 서로 다를 때 흔함 → 접속하는 쪽 화면에 뜬 문구 확인. 서버에만 있는 모드(Forgified Fabric API · Connector 등)를 끄거나 접속하는 쪽에도 넣기`,
+      actions: [{ id: 'open-tab', label: '모드 목록 보기', payload: { tab: 'addons' } }],
+    }),
+  },
 ];
 
 class ErrorTranslator {

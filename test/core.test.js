@@ -386,3 +386,11 @@ test('Mixin 적용 실패 안내 (하이브리드 코어 충돌 · 일반 모드
   assert.strictEqual(b.title, '모드 적용 실패 (Mixin)');
   assert.deepStrictEqual(b.actions[0].payload, { modId: 'carryon' });
 });
+
+test('접속 준비 중 끊김 → 모드 구성 차이 안내', () => {
+  const t = new ErrorTranslator();
+  const a = t.check('[00:56:23] [Server thread/INFO] [minecraft/ServerConfigurationPacketListenerImpl]: com.mojang.authlib.GameProfile@7065a912[id=47e3,name=steve,properties={textures=[Property[name=textures, value=ab]]}] lost connection: Disconnected');
+  assert.strictEqual(a.kind, 'config-disconnect');
+  assert.match(a.message, /Disconnected/);
+  assert.strictEqual(t.check('[Server thread/INFO] [minecraft/ServerGamePacketListenerImpl]: steve lost connection: Disconnected'), null);
+});

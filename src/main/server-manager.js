@@ -1183,6 +1183,11 @@ class ServerManager extends EventEmitter {
 
   async installByName(id, name, onProgress, kind = null) {
     const server = Servers.get(id);
+    // Fabric API 는 Fabric 서버용. Forge·NeoForge 서버에서 이 이름으로 찾으면 대체판(Forgified Fabric API)이 깔려
+    // 접속하는 쪽에 없을 때 "registries with unknown keys" 로 접속이 끊긴다
+    if (['forge', 'neoforge', 'hybrid'].includes(server.type) && /^fabric(?:[-_ ]?api|[-_].*)?$/i.test(String(name).trim())) {
+      throw new Error(`"${name}" 는 Fabric 서버용 — 이 서버에는 넣지 않음`);
+    }
     const view = modrinth.asKind(server, kind);
     const hit = await modrinth.installByName(view, this.dir(id), name, onProgress);
     if (server.type === 'hybrid') for (const a of hit.installed) a.kind = view.hybridKind;
@@ -1225,7 +1230,9 @@ class ServerManager extends EventEmitter {
       list.push(...items);
     }
     const enabled = list.filter((a) => a.enabled);
-    for (const a of list) a.missing = a.meta ? addonMeta.missingDependencies(a.meta, enabled) : [];
+    // 이 서버에서 돌지 않는 파일(다른 로더용)의 의존성은 보지 않는다 — 예) NeoForge 서버의 Fabric 전용 jar 가 "fabric-api 필요"를 띄워
+    // 서버에만 Forgified Fabric API 가 깔리면 접속하는 쪽과 등록 목록이 달라 접속이 끊긴다
+    for (const a of list) a.missing = a.meta && !(a.compat && a.compat.wrongType) ? addonMeta.missingDependencies(a.meta, enabled) : [];
     return list;
   }
 
