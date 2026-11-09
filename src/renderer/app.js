@@ -47,7 +47,8 @@
 
   const state = {
     servers: [],
-    selected: null, // 서버 id 또는 'new'
+    page: 'home', // home: 만들기 + 서버 목록 / server: 고른 서버 한 곳만
+    selected: null, // 서버 페이지에서 보고 있는 서버 id
     tab: 'overview',
     specs: null,
     settings: { theme: 'light' },
@@ -75,17 +76,20 @@
 
   /** 왼쪽 위 표시는 지금 보고 있는 서버(또는 만들고 있는 서버)의 종류를 따른다 */
   function brandType() {
-    if (state.selected === 'new' && state.createMode === 'import') {
+    if (state.page === 'home' && state.createMode === 'import') {
       const d = state.importing && state.importing.det;
       return (d && d.type) || 'paper';
     }
-    if (state.selected === 'new') return (state.create && state.create.type) || 'paper';
+    if (state.page === 'home') return (state.create && state.create.type) || 'paper';
     const s = server();
     return s ? s.type : 'paper';
   }
 
   // ---------- 시작 ----------
   async function init() {
+    // 켜자마자 패널이 켜지며 구동한다 — 오류 있음 / 없음 두 가지 중 하나
+    const faulty = Math.random() < 0.5;
+    const booting = window.Scene ? window.Scene.boot(faulty) : Promise.resolve();
     state.settings = { ...state.settings, ...((await call('app:settings')) || {}) };
     applyTheme(state.settings.theme);
     const [specs, servers, tunnel, javaInstalled] = await Promise.all([call('system:specs'), call('servers:list'), call('tunnel:state'), call('java:installed')]);
@@ -93,10 +97,93 @@
     state.servers = servers || [];
     state.tunnel = tunnel || state.tunnel;
     state.javaInstalled = javaInstalled || [];
-    state.selected = state.servers[0] ? state.servers[0].id : 'new';
+    state.page = 'home';
+    state.selected = null;
     subscribe();
     render();
     setInterval(autoCheck, 60 * 1000);
+    await booting;
+    uiIn(faulty ? 'glitch' : 'clean');
+  }
+
+  /* ---------- 화면 전환 ----------
+     UI가 글리치하며 사라지고 → 패널이 꺼지고 → 꺼진 패널 화면에 로딩 화면 → 패널이 다시 켜지며 → 새 페이지가 나타난다 */
+  const root = document.documentElement;
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  let busy = false;
+  let loaderHook = null;
+  function uiIn(kind = 'clean') {
+    root.dataset.glitch = kind;
+    root.dataset.ui = 'off';
+    void document.body.offsetWidth;
+    root.dataset.ui = 'in';
+  }
+  async function uiOut() {
+    root.dataset.ui = 'out';
+    await sleep(800);
+    root.dataset.ui = 'off';
+  }
+  /** 로딩 화면을 띄운 채 일을 한다. tasks: [[문구, 비율]], work: 실제 작업, progressKey: 진행 이벤트 키 */
+  async function runLoad({ cap, status, tasks, total = 1800, work, progressKey }) {
+    await uiOut();
+    if (!window.Scene) return work ? work() : undefined;
+    await window.Scene.powerDown();
+    const ld = window.Scene.loader({ cap, status, task: tasks ? tasks[0][0] : '준비 중' });
+    if (progressKey) loaderHook = { key: progressKey, fn: (p) => ld.progress(p.percent, p.text) };
+    let result;
+    const job = (async () => {
+      if (tasks) {
+        let acc = 0;
+        for (const [label, w] of tasks) {
+          ld.progress(acc, label);
+          await sleep(total * w);
+          acc += w;
+          ld.progress(acc);
+        }
+      }
+      if (work) result = await work();
+    })();
+    // 로고가 다 그려질 시간은 항상 보장해 연출이 끊기지 않게 한다
+    await Promise.all([job, sleep(2300)]);
+    loaderHook = null;
+    await ld.finish();
+    return result;
+  }
+  async function showPage(setup) {
+    setup();
+    render();
+    if (window.Scene) await window.Scene.powerUp();
+    uiIn('clean');
+  }
+  /** 서버 목록에서 고르면: 로딩 → 그 서버 페이지 */
+  async function openServer(id) {
+    if (busy) return;
+    const s = state.servers.find((x) => x.id === id);
+    if (!s) return;
+    busy = true;
+    const nn = String(state.servers.indexOf(s) + 1).padStart(2, '0');
+    await runLoad({
+      cap: `MCES · SV-${nn} · ${TYPE[s.type].sub.toUpperCase()}`,
+      status: `${s.name} 여는 중`,
+      tasks: [['단말 연결 중', 0.25], ['서버 정보 불러오는 중', 0.3], ['콘솔 연결 중', 0.25], ['상태 점검 중', 0.2]],
+    });
+    await showPage(() => {
+      state.page = 'server';
+      state.selected = id;
+      state.tab = 'overview';
+    });
+    busy = false;
+  }
+  /** 서버 페이지의 뒤로 나가기 → 만들기 페이지 */
+  async function goHome() {
+    if (busy) return;
+    busy = true;
+    await uiOut();
+    state.page = 'home';
+    state.selected = null;
+    render();
+    uiIn('clean');
+    busy = false;
   }
 
   function applyTheme(theme) {
@@ -122,7 +209,10 @@
     });
     mc.on('server:removed', ({ serverId }) => {
       state.servers = state.servers.filter((s) => s.id !== serverId);
-      if (state.selected === serverId) state.selected = state.servers[0] ? state.servers[0].id : 'new';
+      if (state.selected === serverId) {
+        state.page = 'home';
+        state.selected = null;
+      }
       render();
     });
     mc.on('server:console', (e) => {
@@ -156,10 +246,11 @@
     mc.on('tunnel:state', (t) => {
       state.tunnel = t;
       renderBand();
-      if (state.selected && state.selected !== 'new') renderAddress();
+      if (state.page === 'server') renderAddress();
     });
     mc.on('progress', (p) => {
       state.progress[p.key] = p;
+      if (loaderHook && loaderHook.key === p.key) loaderHook.fn(p);
       for (const v of progressViews.get(p.key) || []) {
         v.bar.set(p.percent);
         if (v.label) v.label.textContent = p.text || '';
@@ -181,35 +272,63 @@
 
   // ---------- 그리기 ----------
   function render() {
-    renderSide();
     renderMain();
+    renderSide();
   }
 
   function renderSide() {
     renderBrand();
-    const items = state.servers.map((s, i) =>
-      h(
-        `button.nav-item${s.id === state.selected ? '.is-on' : ''}`,
-        { type: 'button', onclick: () => selectServer(s.id) },
-        h('b', null, String(i + 1).padStart(2, '0')),
+    const pane = $('.pane-l');
+    pane.classList.toggle('is-home', state.page === 'home');
+    if (state.page === 'home') {
+      // 위: 만들기 버튼 (1) / 아래: 내 서버 목록 (7)
+      const importing = state.createMode === 'import';
+      const items = state.servers.map((s, i) =>
         h(
-          'span.nav-body',
-          null,
-          h('span.nav-name', null, s.name),
-          h('span.nav-meta', null, dot(STATUS[s.status].dot), `${TYPE[s.type].sub} ${s.version}${s.status === 'running' ? ` · ${s.players.length}명` : ''}`),
+          'button.nav-item',
+          { type: 'button', onclick: () => openServer(s.id) },
+          h('b', null, String(i + 1).padStart(2, '0')),
+          h(
+            'span.nav-body',
+            null,
+            h('span.nav-name', null, s.name),
+            h('span.nav-meta', null, dot(STATUS[s.status].dot), `${TYPE[s.type].sub} ${s.version}${s.status === 'running' ? ` · ${s.players.length}명` : ''}`),
+          ),
+          s.status === 'running' && s.metrics && typeof s.metrics.tps === 'number' ? h('span.nav-tps', { title: 'TPS' }, s.metrics.tps.toFixed(1)) : null,
         ),
-        s.status === 'running' && s.metrics && typeof s.metrics.tps === 'number' ? h('span.nav-tps', { title: 'TPS' }, s.metrics.tps.toFixed(1)) : null,
-      ),
-    );
-    put($('#side'),
-      ...items,
-      h(
-        `button.nav-item.nav-new${state.selected === 'new' ? '.is-on' : ''}`,
-        { type: 'button', onclick: () => selectServer('new') },
-        h('b', null, '+'),
-        h('span.nav-body', null, h('span.nav-name', null, '새 서버'), h('span.nav-meta', null, '만들기 · 기존 서버 가져오기')),
-      ),
-    );
+      );
+      put($('#side'),
+        h(
+          'section.home-create',
+          null,
+          h(
+            'button.create-go',
+            { type: 'button', id: 'createGo', onclick: () => live.createAction && live.createAction() },
+            h('span.create-go-art'),
+            h('span.create-go-code', null, importing ? 'SV-NEW · IMPORT' : 'SV-NEW'),
+            h('span.create-go-text', null, importing ? '서버 가져오기' : '서버 만들기'),
+            h('span.create-go-line'),
+          ),
+        ),
+        h(
+          'section.home-list',
+          null,
+          h('div.list-head', null, h('span.pane-label', null, '내 서버'), h('span.pane-label', null, String(state.servers.length).padStart(2, '0'))),
+          h('div.nav', null, items.length ? items : h('span.empty', null, '아직 만든 서버 없음')),
+        ),
+      );
+      if (live.refreshCreate) live.refreshCreate();
+    } else {
+      put($('#side'),
+        h(
+          'button.back',
+          { type: 'button', onclick: goHome },
+          h('span.back-arrow', { 'aria-hidden': 'true' }),
+          h('span', null, '뒤로'),
+          h('span.back-code', null, 'MCES · 만들기'),
+        ),
+      );
+    }
     put($('#paneFoot'),
       h('span.foot-code', null, 'MCES · SCRF/SECTOR A'),
       seg(
@@ -234,28 +353,14 @@
     put($('#brand'), typeMark(brandType(), '.brand-mark'), h('div.brand-text', null, h('span.brand-word', null, 'MCES'), h('span.brand-sub', null, 'SERVER TERMINAL · 0x3F7A')));
   }
 
-  /** 위쪽 꺼진 띠 바닥면에 새기는 단말 문구 (SCRF 시스템 문구 형식) */
+  /** 위쪽 꺼진 띠 바닥면에 새기는 코드와 PC 사양 */
   function renderBand() {
     if (!window.Scene) return;
     const specs = state.specs;
     const running = state.servers.filter((s) => s.status === 'running').length;
-    const busy = state.servers.some((s) => s.status === 'starting' || s.status === 'stopping');
     const java = state.javaInstalled.length ? state.javaInstalled.map((j) => j.major).join('·') : '없음';
-    const right = [specs ? `MEM ${specs.totalGb}GB` : null, specs ? `추천 ${fmt.gb(specs.recommendedMb)}` : null, specs ? `CPU ${specs.cpuCores}C` : null, `JAVA ${java}`].filter(Boolean).join('  ·  ');
-    window.Scene.setBand({
-      ok: true,
-      tag: '[MCES ROUTE]',
-      line: `단말 상태 : ${busy ? '전환 중' : '정상'} · 서버 ${state.servers.length} · 실행 ${running}`,
-      link: state.tunnel.status === 'connected' || Object.keys(state.tunnel.addresses || {}).length > 0,
-      code: 'MC.ES-0.7',
-      right,
-    });
-  }
-
-  function selectServer(id) {
-    if (state.selected !== id) state.tab = 'overview';
-    state.selected = id;
-    render();
+    const right = [`SV ${state.servers.length} · RUN ${running}`, specs ? `MEM ${specs.totalGb}GB` : null, specs ? `CPU ${specs.cpuCores}C` : null, `JAVA ${java}`].filter(Boolean).join('  ·  ');
+    window.Scene.setBand({ code: 'MC.ES-0.7', right });
   }
 
   function renderMain() {
@@ -263,16 +368,16 @@
     progressViews.clear();
     const main = $('#main');
     const detail = $('#detail');
-    if (state.selected === 'new') {
-      const right = renderCreate();
-      put(detail, live.createLeft);
-      put(main, right);
+    if (state.page === 'home') {
+      put(main, renderCreate());
+      put(detail);
+      renderSide();
       return;
     }
     const s = server();
     if (!s) {
-      put(detail);
-      put(main, h('div.empty-state', null, h('div.stack', null, h('h2', null, '서버 선택'))));
+      state.page = 'home';
+      renderMain();
       return;
     }
     // 왼쪽 판: 고른 서버의 코발트 박스(이름·상태·접속 주소) → 설명 한 줄 → 상태 위젯 → 시작 줄
@@ -307,8 +412,8 @@
     trackProgress(startKey, startBar, startLabel);
     put(live.head,
       h('span.chip', null, dot(st.dot), st.label),
-      h('h1.card-title', null, h('span.card-name', null, s.name), h('small', null, `${TYPE[s.type].label}`)),
-      h('p.card-code', null, `SV-${String(state.servers.indexOf(s) + 1).padStart(2, '0')} · ${TYPE[s.type].sub.toUpperCase()}${s.build ? ` #${s.build}` : ''} · ${s.version} · PORT ${s.port}`),
+      h('h1.card-title', { title: s.name }, s.name),
+      h('p.card-code', null, h('span', null, `SV-${String(state.servers.indexOf(s) + 1).padStart(2, '0')}`), h('span', null, `${TYPE[s.type].sub}${s.build ? ` #${s.build}` : ''}`), h('span', null, s.version), h('span', null, `:${s.port}`)),
     );
     live.note.textContent = s.status === 'running' && s.startedAt ? `${fmt.uptime(Date.now() - s.startedAt)}째 실행 중 —` : s.status === 'starting' ? '켜는 중 —' : s.status === 'stopping' ? '저장하고 끄는 중 —' : '꺼져 있음 —';
     const go =
@@ -450,7 +555,7 @@
       main = h(
         'div.address-main',
         null,
-        h('div.address-col', null, h('span.address-label', null, tunnelBusy ? t.message || '터널 연결 중' : '접속 주소 없음'), tunnelBusy ? bar : h('span.address-hint', null, t.status === 'error' ? t.message : '터널 연결 시 포트포워딩 없이 외부 접속 가능')),
+        h('div.address-col', null, h('span.address-label', null, tunnelBusy ? t.message || '터널 연결 중' : '접속 주소 없음'), tunnelBusy ? bar : h('span.address-hint', { title: t.status === 'error' ? t.message : '' }, t.status === 'error' ? t.message : '포트포워딩 없이 외부 접속')),
         button('터널 연결', () => startTunnel(s.id), { small: true, kind: 'primary', disabled: tunnelBusy }),
         button(null, () => editAddress(s), { small: true, kind: 'ghost', icon: '✎', title: '주소 직접 입력' }),
       );
@@ -1456,15 +1561,10 @@
   // ---------- 새 서버 만들기 (마법사가 아니라 한 화면) ----------
   /** 만들기 화면 머리: 새로 만들기 / 기존 서버 가져오기 전환 */
   function createHead(title, sub) {
-    return h('div.create-head', null, h('div', null, h('h1', null, title), h('p', { style: { marginTop: '6px' } }, sub)));
-  }
-
-  /** 왼쪽 판 머리: 새로 만들기 / 기존 서버 가져오기 */
-  function createLeftHead() {
     return h(
-      'div.create-left-head',
+      'div.create-head',
       null,
-      h('span.pane-label', null, 'SV-NEW · 새 서버'),
+      h('div', null, h('h1', null, title), h('p', { style: { marginTop: '6px' } }, sub)),
       seg([{ value: 'new', label: '새로 만들기' }, { value: 'import', label: '기존 서버 가져오기' }], state.createMode || 'new', (v) => {
         state.createMode = v;
         render();
@@ -1549,16 +1649,19 @@
     const nameRow = row('서버 이름', '이 앱에서만 표시 · 비우면 만들 수 없음', nameField);
     const versionBox = h('div');
     const javaBox = h('div.pc-item.well-sm');
-    const createBtn = button('서버 만들기', () => create(), { kind: 'primary', icon: '✓', class: 'btn-lg' });
     const bar = progressBar(0);
     const barLabel = h('span.txt');
     trackProgress('create', bar, barLabel);
     const progressBox = h('div.card.progress-line', { class: c.busy ? '' : 'hidden' }, barLabel, bar);
 
+    // 만들기 버튼은 왼쪽 판 위쪽에 있다
     const refreshCreate = () => {
-      createBtn.disabled = !c.eula || !c.version || c.busy;
-      createBtn.title = !c.eula ? 'EULA 동의 필요' : !c.version ? '버전 선택 필요' : '';
+      const btn = $('#createGo');
+      if (!btn) return;
+      btn.disabled = !c.eula || !c.version || c.busy;
+      btn.title = !c.eula ? 'EULA 동의 필요' : !c.version ? '버전 선택 필요' : '';
     };
+    live.refreshCreate = refreshCreate;
 
     const loadVersions = async () => {
       put(versionBox, h('span.note', null, '버전 목록을 불러오는 중…'));
@@ -1634,7 +1737,7 @@
       );
     };
     const typeCards = h(
-      'div.type-list',
+      'div.type-grid',
       null,
       TYPE_CARDS.map((t) =>
         h(
@@ -1659,8 +1762,6 @@
       ),
     );
     drawLoader();
-    // 서버 종류는 왼쪽 판에 세로로 쌓는다
-    live.createLeft = h('div.create-left', null, createLeftHead(), typeCards, loaderRow);
 
     const memMarks = [{ value: specs.recommendedMb, label: `추천 ${fmt.gb(specs.recommendedMb)}` }];
     const mem = slider({ min: 1024, max: specs.maxMb, step: 512, value: c.memoryMb, onInput: (v) => (c.memoryMb = v), format: fmt.gb, marks: memMarks });
@@ -1680,27 +1781,44 @@
         return toast('가져올 맵 선택 필요', { kind: 'error' });
       }
       if (!c.eula) return toast('EULA 동의 필요', { kind: 'error' });
+      if (busy) return;
+      busy = true;
       c.busy = true;
       refreshCreate();
-      progressBox.classList.remove('hidden');
-      const s = await call('servers:create', { type: c.type, version: c.version, name: c.name.trim(), memoryMb: c.memoryMb, optimize: c.optimize, eula: c.eula, settings: c.settings, world: c.world }, 'create');
+      // UI가 사라지고 패널이 꺼진 뒤, 패널 화면의 로딩 화면이 실제 진행을 따라간다
+      const s = await runLoad({
+        cap: `MCES · SV-NEW · ${TYPE[c.type].sub.toUpperCase()} ${c.version}`,
+        status: `${c.name.trim()} 만드는 중`,
+        progressKey: 'create',
+        work: () => call('servers:create', { type: c.type, version: c.version, name: c.name.trim(), memoryMb: c.memoryMb, optimize: c.optimize, eula: c.eula, settings: c.settings, world: c.world }, 'create'),
+      });
       c.busy = false;
-      progressBox.classList.add('hidden');
-      refreshCreate();
       if (s && s !== true) {
         state.create = null;
         if (!state.servers.find((x) => x.id === s.id)) state.servers.push(s);
         state.javaInstalled = (await call('java:installed')) || state.javaInstalled;
         toast(`${s.name} 생성 완료`, { kind: 'ok', timeout: 6000 });
-        selectServer(s.id);
+        await showPage(() => {
+          state.page = 'server';
+          state.selected = s.id;
+          state.tab = 'overview';
+        });
+      } else {
+        await showPage(() => {
+          state.page = 'home';
+        });
       }
+      busy = false;
     };
+    live.createAction = create;
 
     root.append(
       h(
         'div.stack',
         { style: { gap: '18px' } },
         createHead('새 서버 만들기', '"서버 만들기"를 누르면 Java 확인부터 최적화까지 자동 진행'),
+
+        h('div.card', null, h('div.card-head', null, h('h2', null, '서버 종류')), typeCards, loaderRow),
 
         h('div.card', null, h('div.card-head', null, h('div', null, h('h2', null, '만들기 전에 확인'), h('div.note', null, '이 PC에서 자동 확인'))), h(
           'div.precheck',
@@ -1747,7 +1865,7 @@
         ),
 
         progressBox,
-        h('div.create-bar', null, h('span.note', null, '서버와 Java는 모두 앱 폴더 안에 생성'), createBtn),
+        h('div.create-bar', null, h('span.note', null, '서버와 Java는 모두 앱 폴더 안에 생성 · 왼쪽 위 "서버 만들기"로 시작')),
       ),
     );
     loadVersions();
@@ -1763,7 +1881,6 @@
     const g = (state.importing = state.importing || { det: null, mode: 'copy', name: '', memoryMb: specs.recommendedMb, optimize: true, eula: false, busy: false, inspecting: false });
     const root = h('div.main-scroll');
     const body = h('div.stack', { style: { gap: '22px' } });
-    live.createLeft = h('div.create-left', null, createLeftHead(), h('p.pane-note', null, '앱 밖에서 만든 서버 폴더를 목록에 추가 —'));
 
     const inspect = async (dir) => {
       g.inspecting = true;
@@ -1836,9 +1953,15 @@
     const run = async () => {
       if (!g.name.trim()) return toast('서버 이름 필요', { kind: 'error' });
       if (!g.eula) return toast('EULA 동의 필요', { kind: 'error' });
+      if (busy) return;
+      busy = true;
       g.busy = true;
-      draw();
-      const s = await call('servers:import', { path: g.det.path, mode: g.mode, name: g.name.trim(), memoryMb: g.memoryMb, optimize: g.optimize, eula: g.eula }, 'import');
+      const s = await runLoad({
+        cap: `MCES · SV-NEW · IMPORT`,
+        status: `${g.name.trim()} 가져오는 중`,
+        progressKey: 'import',
+        work: () => call('servers:import', { path: g.det.path, mode: g.mode, name: g.name.trim(), memoryMb: g.memoryMb, optimize: g.optimize, eula: g.eula }, 'import'),
+      });
       g.busy = false;
       if (s && s !== true) {
         state.importing = null;
@@ -1846,11 +1969,19 @@
         if (!state.servers.find((x) => x.id === s.id)) state.servers.push(s);
         state.javaInstalled = (await call('java:installed')) || state.javaInstalled;
         toast(`${s.name} 가져오기 완료`, { kind: 'ok', timeout: 6000 });
-        selectServer(s.id);
-        return;
+        await showPage(() => {
+          state.page = 'server';
+          state.selected = s.id;
+          state.tab = 'overview';
+        });
+      } else {
+        await showPage(() => {
+          state.page = 'home';
+        });
       }
-      draw();
+      busy = false;
     };
+    live.createAction = run;
 
     const optionsCard = (d) => {
       const memMarks = [{ value: specs.recommendedMb, label: `추천 ${fmt.gb(specs.recommendedMb)}` }];
@@ -1877,7 +2008,15 @@
     const draw = () => {
       const d = g.det;
       const ok = d && !d.problems.length;
-      const importBtn = button('가져오기', run, { kind: 'primary', icon: '✓', class: 'btn-lg', disabled: !ok || g.busy || !g.eula });
+      const btn = $('#createGo');
+      if (btn) {
+        btn.disabled = !ok || g.busy || !(g.eula || (d && d.eula));
+        btn.title = !ok ? '서버 폴더 선택 필요' : '';
+      }
+      live.refreshCreate = () => {
+        const b2 = $('#createGo');
+        if (b2) b2.disabled = !ok || g.busy || !(g.eula || (d && d.eula));
+      };
       put(
         body,
         folderCard(),
@@ -1895,7 +2034,7 @@
             )
           : null,
         progressBox,
-        ok ? h('div.create-bar', null, h('span.note', null, '월드 · 플러그인 · 설정 파일은 그대로 유지'), importBtn) : null,
+        ok ? h('div.create-bar', null, h('span.note', null, '월드 · 플러그인 · 설정 파일은 그대로 유지 · 왼쪽 위 "서버 가져오기"로 시작')) : null,
       );
       progressBox.classList.toggle('hidden', !g.busy);
     };
