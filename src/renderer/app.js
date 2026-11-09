@@ -361,8 +361,28 @@
         async (theme) => {
           // 패널 새로 고침 — 테마 버튼 자리에서 충격파가 퍼지며 지나간 칸이 새 색으로 바뀐다
           const at = $('#paneFoot .seg').getBoundingClientRect();
-          if (window.Scene) await window.Scene.refresh(at.left + at.width / 2, at.top + at.height / 2, () => applyTheme(theme));
-          else applyTheme(theme);
+          if (window.Scene) {
+            // 판(UI 창)은 옛 색을 붙든 채 있다가, 배경 패널이 판 가운데까지 바뀌면 그때 바뀐다
+            const old = root.dataset.theme;
+            const panes = [...document.querySelectorAll('.pane')].filter((p) => p.offsetParent !== null || getComputedStyle(p).display !== 'none');
+            for (const p of panes) p.dataset.theme = old;
+            const done = window.Scene.refresh(at.left + at.width / 2, at.top + at.height / 2, () => applyTheme(theme));
+            for (const p of panes) {
+              const r = p.getBoundingClientRect();
+              setTimeout(() => {
+                p.dataset.theme = theme;
+                p.classList.remove('is-refreshing');
+                void p.offsetWidth;
+                p.classList.add('is-refreshing');
+              }, window.Scene.refreshDelay(r.left + r.width / 2, r.top + r.height / 2));
+            }
+            await done;
+            await sleep(450);
+            for (const p of panes) {
+              delete p.dataset.theme;
+              p.classList.remove('is-refreshing');
+            }
+          } else applyTheme(theme);
           if (live.updateMetrics) live.updateMetrics();
           // 창 제목 줄(운영체제가 그린다)은 패널이 다 바뀐 뒤에 바꾼다 — 먼저 바뀌면 어색하다
           state.settings = (await call('app:setSettings', { theme })) || state.settings;
@@ -1070,7 +1090,7 @@
       if (state.page === 'server' && state.selected === s.id && state.tab === 'addons') renderTab();
       if (!r || r === true) return;
       for (const p of r.packs || []) {
-        const extra = [p.disabled.length ? `화면 전용 모드 ${p.disabled.length}개는 꺼 둠` : null, p.failed.length ? `${p.failed.length}개 받기 실패` : null].filter(Boolean).join(' · ');
+        const extra = [p.datapacks ? `데이터팩 ${p.datapacks}개는 월드에` : null, p.skipped ? `서버가 쓰지 않는 리소스팩·셰이더 ${p.skipped}개 건너뜀` : null, p.failed.length ? `${p.failed.length}개 받기 실패` : null].filter(Boolean).join(' · ');
         toast(`모드팩 ${p.name}${p.version ? ` ${p.version}` : ''} — 모드 ${p.mods}개 · 설정 파일 ${p.overrides}개 추가${extra ? ` · ${extra}` : ''}${r.needsRestart ? ' — 재시작 시 적용' : ''}`, { kind: p.failed.length ? 'error' : 'ok', timeout: 9000 });
         for (const w of p.warnings) toast(w, { kind: 'error', timeout: 9000 });
         if (p.failed.length) console.warn('모드팩 받기 실패', p.failed);

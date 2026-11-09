@@ -2232,6 +2232,13 @@
         };
       });
     },
+    /** 새로 고침 중 화면의 한 점(clientX, clientY)이 새 색으로 바뀌기까지 남은 시간(ms) */
+    refreshDelay(clientX, clientY) {
+      const cxw = innerWidth / 2 + (clientX - innerWidth / 2) / SCALE;
+      const cyw = innerHeight / 2 + (clientY - innerHeight / 2) / SCALE;
+      const d = Math.hypot(cxw / k - wave.o[0], cyw / k - wave.o[1]);
+      return Math.max(0, d / wave.v + 130 - (performance.now() - wave.t0));
+    },
     /** 새로 고침 — (clientX, clientY)에서 충격파가 퍼지며 지나간 칸이 새 화면으로. apply()가 화면을 바꾼다 */
     refresh(clientX, clientY, apply) {
       if (oldSnap.width !== canvas.width || oldSnap.height !== canvas.height) {
