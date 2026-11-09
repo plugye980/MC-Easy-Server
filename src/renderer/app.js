@@ -60,6 +60,8 @@
     history: {}, // serverId -> [point]
     reach: {}, // serverId -> 점검 결과
     progress: {}, // key -> {text, percent}
+    addonJobs: {}, // serverId -> true (파일·모드팩을 넣는 중)
+    addonFilter: {}, // serverId -> 설치된 목록 거르기 상태
     create: null,
   };
   const progressViews = new Map(); // key -> [{bar, label}]
@@ -171,6 +173,26 @@
       state.tab = 'overview';
     });
   }
+  /* ESC — 서버 페이지에서는 뒤로, 메인에서는 종료 화면.
+     종료: 확인 → UI가 아래로 내려가며 사라짐 → 패널 화면이 가장자리부터 차례로 꺼짐 → 앱 종료 */
+  document.addEventListener('keydown', async (e) => {
+    if (e.key !== 'Escape' || busy || root.dataset.ui !== 'in') return;
+    if (!$('#overlay').hidden || document.querySelector('.closing')) return;
+    if (state.page === 'server') return goHome();
+    const running = state.servers.filter((s) => s.status !== 'stopped').length;
+    const ok = await modal({
+      title: 'MCES 종료',
+      body: h('p', null, running ? `켜져 있는 서버 ${running}개는 저장하고 안전하게 끈 뒤 종료합니다.` : '단말을 종료합니다.'),
+      actions: [{ label: '취소', value: false }, { label: '종료', value: true, kind: 'danger' }],
+    });
+    if (!ok) return;
+    busy = true;
+    root.dataset.ui = 'exit';
+    await sleep(750);
+    if (window.Scene) await window.Scene.shutdown();
+    await call('app:quit');
+  });
+
   /** 서버 페이지의 뒤로 나가기 → 만들기 페이지 */
   function goHome() {
     goto(() => {
@@ -278,6 +300,9 @@
       const importing = state.createMode === 'import';
       const items = state.servers.map((s, i) =>
         h(
+          'div.nav-row',
+          null,
+          h(
           'button.nav-item',
           { type: 'button', onclick: () => openServer(s.id) },
           h('b', null, String(i + 1).padStart(2, '0')),
@@ -288,6 +313,8 @@
             h('span.nav-meta', null, dot(STATUS[s.status].dot), `${TYPE[s.type].sub} ${s.version}${s.status === 'running' ? ` · ${s.players.length}명` : ''}`),
           ),
           s.status === 'running' && s.metrics && typeof s.metrics.tps === 'number' ? h('span.nav-tps', { title: 'TPS' }, s.metrics.tps.toFixed(1)) : null,
+          ),
+          h('button.nav-del', { type: 'button', title: `${s.name} 삭제`, 'aria-label': `${s.name} 삭제`, disabled: s.status !== 'stopped', onclick: () => removeServer(s) }, '✕'),
         ),
       );
       put($('#side'),
@@ -298,18 +325,11 @@
             'button.create-go',
             { type: 'button', id: 'createGo', onclick: () => live.createAction && live.createAction() },
             h('span.create-go-art'),
-            h('span.create-go-code', null, importing ? 'SV-NEW · IMPORT' : 'SV-NEW'),
-            h('span.create-go-text', null, importing ? '서버 가져오기' : '서버 만들기'),
+            h('span.create-go-code', { id: 'createGoCode' }, importing ? 'SV-NEW · IMPORT' : 'SV-NEW'),
+            h('span.create-go-text', { id: 'createGoText' }, importing ? '서버 가져오기' : '서버 만들기'),
             h('span.create-go-line'),
           ),
-          live.eula
-            ? h(
-                'div.eula-line',
-                null,
-                checkbox(live.eula.get(), (v) => live.eula.set(v), '마인크래프트 이용 약관(EULA) 동의'),
-                h('button.eula-read', { type: 'button', onclick: () => call('app:openExternal', 'https://aka.ms/MinecraftEULA') }, '약관 읽기'),
-              )
-            : null,
+          h('div', { id: 'eulaSlotWrap' }, eulaLine()),
         ),
         h(
           'section.home-list',
@@ -351,6 +371,44 @@
       ),
     );
     renderBand();
+  }
+
+  function eulaLine() {
+    return live.eula
+      ? h(
+          'div.eula-line',
+          null,
+          checkbox(live.eula.get(), (v) => live.eula.set(v), '마인크래프트 이용 약관(EULA) 동의'),
+          h('button.eula-read', { type: 'button', onclick: () => call('app:openExternal', 'https://aka.ms/MinecraftEULA') }, '약관 읽기'),
+        )
+      : null;
+  }
+  /** 홈 왼쪽 위 만들기 버튼만 고친다 (글자 · EULA 줄 · 눌 수 있는지) */
+  function updateCreateGo() {
+    const importing = state.createMode === 'import';
+    const code = $('#createGoCode');
+    const text = $('#createGoText');
+    if (code) code.textContent = importing ? 'SV-NEW · IMPORT' : 'SV-NEW';
+    if (text) text.textContent = importing ? '서버 가져오기' : '서버 만들기';
+    const slot = $('#eulaSlotWrap');
+    if (slot) put(slot, eulaLine());
+    if (live.refreshCreate) live.refreshCreate();
+    renderBrand();
+  }
+  /** 새로 만들기 ↔ 기존 서버 가져오기: 오른쪽 판만 흐려졌다가 새로 나온다 */
+  async function switchCreateMode(v) {
+    if (state.createMode === v) return;
+    state.createMode = v;
+    const main = $('#main');
+    main.classList.add('is-swap');
+    await sleep(220);
+    live.eula = null;
+    live.createAction = null;
+    live.refreshCreate = null;
+    progressViews.clear();
+    put(main, renderCreate());
+    updateCreateGo();
+    main.classList.remove('is-swap');
   }
 
   /** 왼쪽 위 로고 — 지금 보고 있는 서버(또는 만들고 있는 서버)의 종류 표시를 쓴다 */
@@ -881,6 +939,17 @@
   }
 
   // 추가 기능: 설치됨 + Modrinth 검색 · 원클릭 설치
+  /** 쪽 넘김 단추: 처음 · 현재 주변 · 끝 번호만 (예: 1 … 4 5 6 … 20) */
+  function pagerButtons(cur, pages, go) {
+    const nums = [...new Set([0, cur - 2, cur - 1, cur, cur + 1, cur + 2, pages - 1])].filter((n) => n >= 0 && n < pages).sort((a, b) => a - b);
+    const items = [];
+    nums.forEach((n, i) => {
+      if (i && n - nums[i - 1] > 1) items.push(h('span.pager-gap.dim', null, '…'));
+      items.push(h(`button.pager-num${n === cur ? '.on' : ''}`, { type: 'button', onclick: () => n !== cur && go(n), 'aria-current': n === cur ? 'page' : null, 'aria-label': `${n + 1}페이지` }, h('span.txt.num', null, String(n + 1))));
+    });
+    return [button('이전', () => go(cur - 1), { small: true, icon: '‹', disabled: cur === 0 }), h('div.pager-nums', null, items), button('다음', () => go(cur + 1), { small: true, icon: '›', disabled: cur >= pages - 1 })];
+  }
+
   function viewAddons(s) {
     const t = TYPE[s.type];
     const hybrid = s.type === 'hybrid';
@@ -894,50 +963,73 @@
     const progressBox = h('div.progress-line.hidden', null, barLabel, bar);
     trackProgress(`addon-${s.id}`, bar, barLabel);
 
+    // 설치된 목록 — 모드팩처럼 수백 개여도 다루기 쉽게: 이름 거르기 · 상태 거르기 · 쪽 나누기
+    const LIST_PAGE = 40;
+    const lq = state.addonFilter[s.id] || (state.addonFilter[s.id] = { text: '', show: 'all', page: 0 });
+    let allItems = [];
+    const installedPager = h('div.pager');
+    const installedNote = h('span.note');
+    const rowOf = (a) =>
+      h(
+        `div.list-item${a.enabled ? '' : '.disabled'}`,
+        null,
+        a.iconUrl ? h('img.icon-img', { src: a.iconUrl, alt: '', loading: 'lazy' }) : h('div.icon-img.icon-ph.txt', null, (a.title || '?')[0]),
+        h(
+          'div',
+          { style: { minWidth: 0 } },
+          h(
+            'div.list-title',
+            null,
+            h('span.txt', null, a.title),
+            hybrid ? h('span.tag.txt', null, a.kind === 'mod' ? '모드' : '플러그인') : null,
+            a.dependencyOf ? h('span.tag.txt', null, '자동 설치된 의존성') : null,
+            a.projectId ? null : h('span.tag.txt', null, a.manual ? '폴더에 직접 넣음' : '파일로 추가'),
+            a.importedFromFile ? h('span.tag.txt', { title: '같은 파일이 Modrinth 에 있어 업데이트·호환성 검사 가능' }, 'Modrinth 확인됨') : null,
+          ),
+          h('div.note', null, a.versionNumber ? `${a.versionNumber} · ${a.fileName}` : a.fileName),
+          compatLine(a),
+        ),
+        h(
+          'div.list-actions',
+          null,
+          toggle(a.enabled, async (on) => {
+            await call('addons:toggle', s.id, a.fileName, on);
+            toast(on ? `${a.title} 켜짐` : `${a.title} 꺼짐`);
+            refreshInstalled();
+          }),
+          button(null, async () => {
+            const ok = await modal({ title: `${a.title} 삭제`, body: h('p', null, '파일 삭제. 설정 폴더는 유지'), actions: [{ label: '취소', value: false }, { label: '삭제', value: true, kind: 'danger' }] });
+            if (ok && (await call('addons:remove', s.id, a.fileName))) refreshInstalled();
+          }, { small: true, kind: 'ghost', icon: '✕', title: '삭제' }),
+        ),
+      );
+    const problem = (a) => (a.compat && a.compat.status === 'bad') || (a.enabled && a.missing && a.missing.length);
+    const drawInstalled = () => {
+      const needle = lq.text.trim().toLowerCase();
+      const shown = allItems.filter((a) => {
+        if (lq.show === 'on' && !a.enabled) return false;
+        if (lq.show === 'off' && a.enabled) return false;
+        if (lq.show === 'problem' && !problem(a)) return false;
+        return !needle || `${a.title} ${a.fileName}`.toLowerCase().includes(needle);
+      });
+      const pages = Math.max(1, Math.ceil(shown.length / LIST_PAGE));
+      lq.page = Math.min(lq.page, pages - 1);
+      const on = allItems.filter((a) => a.enabled).length;
+      const bad = allItems.filter(problem).length;
+      installedNote.textContent = `전체 ${allItems.length} · 켜짐 ${on} · 꺼짐 ${allItems.length - on}${bad ? ` · 확인 필요 ${bad}` : ''}${shown.length !== allItems.length ? ` — ${shown.length}개 표시` : ''}`;
+      put(installed, ...(shown.length ? shown.slice(lq.page * LIST_PAGE, (lq.page + 1) * LIST_PAGE).map(rowOf) : [h('span.empty', null, allItems.length ? '조건에 맞는 항목 없음' : `설치된 ${t.addon} 없음 — "찾기"에서 검색하거나 파일로 추가`)]));
+      put(installedPager, ...(pages > 1 ? pagerButtons(lq.page, pages, (p) => {
+        lq.page = p;
+        drawInstalled();
+        installed.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      }) : []));
+    };
     const refreshInstalled = async () => {
       const list = await call('addons:list', s.id);
       if (!Array.isArray(list)) return;
-      put(installed, 
-        ...(list.length
-          ? list
-              .sort((a, b) => (a.dependencyOf ? 1 : 0) - (b.dependencyOf ? 1 : 0))
-              .map((a) =>
-                h(
-                  `div.list-item${a.enabled ? '' : '.disabled'}`,
-                  null,
-                  a.iconUrl ? h('img.icon-img', { src: a.iconUrl, alt: '' }) : h('div.icon-img.icon-ph.txt', null, (a.title || '?')[0]),
-                  h(
-                    'div',
-                    { style: { minWidth: 0 } },
-                    h(
-                      'div.list-title',
-                      null,
-                      h('span.txt', null, a.title),
-                      hybrid ? h('span.tag.txt', null, a.kind === 'mod' ? '모드' : '플러그인') : null,
-                      a.dependencyOf ? h('span.tag.txt', null, '자동 설치된 의존성') : null,
-                      a.projectId ? null : h('span.tag.txt', null, a.manual ? '폴더에 직접 넣음' : '파일로 추가'),
-                      a.importedFromFile ? h('span.tag.txt', { title: '같은 파일이 Modrinth 에 있어 업데이트·호환성 검사 가능' }, 'Modrinth 확인됨') : null,
-                    ),
-                    h('div.note', null, a.versionNumber ? `${a.versionNumber} · ${a.fileName}` : a.fileName),
-                    compatLine(a),
-                  ),
-                  h(
-                    'div.list-actions',
-                    null,
-                    toggle(a.enabled, async (on) => {
-                      await call('addons:toggle', s.id, a.fileName, on);
-                      toast(on ? `${a.title} 켜짐` : `${a.title} 꺼짐`);
-                      refreshInstalled();
-                    }),
-                    button(null, async () => {
-                      const ok = await modal({ title: `${a.title} 삭제`, body: h('p', null, '파일 삭제. 설정 폴더는 유지'), actions: [{ label: '취소', value: false }, { label: '삭제', value: true, kind: 'danger' }] });
-                      if (ok && (await call('addons:remove', s.id, a.fileName))) refreshInstalled();
-                    }, { small: true, kind: 'ghost', icon: '✕', title: '삭제' }),
-                  ),
-                ),
-              )
-          : [h('span.empty', null, `설치된 ${t.addon} 없음 — 오른쪽에서 검색하거나 파일로 추가`)]),
-      );
+      allItems = list.sort((a, b) => (a.dependencyOf ? 1 : 0) - (b.dependencyOf ? 1 : 0) || String(a.title).localeCompare(String(b.title)));
+      if (viewSeg) viewSeg.querySelector('.seg-item .txt').textContent = `설치됨 ${allItems.length}`;
+      drawInstalled();
     };
 
     /** 직접 추가한 파일의 호환 여부와 빠진 의존성 */
@@ -966,12 +1058,16 @@
 
     /** 파일에서 추가 (선택 창 또는 끌어다 놓기) */
     const importFiles = async (paths) => {
-      // 모드팩은 모드를 받는 동안 진행 막대를 보여 준다
-      progressBox.classList.remove('hidden');
-      bar.set(0);
-      barLabel.textContent = '파일 확인 중';
+      // 모드팩은 오래 걸린다. 다른 화면으로 갔다 와도 진행 막대가 이어지도록 작업 상태를 앱 상태에 둔다
+      if (state.addonJobs[s.id]) return toast('이미 파일(모드팩)을 넣는 중 — 끝난 뒤 다시 시도', { kind: 'error' });
+      state.addonJobs[s.id] = true;
+      state.progress[`addon-${s.id}`] = { key: `addon-${s.id}`, text: '파일 확인 중', percent: 0 };
+      showJob();
       const r = await call('addons:importFiles', s.id, paths);
-      progressBox.classList.add('hidden');
+      delete state.addonJobs[s.id];
+      delete state.progress[`addon-${s.id}`];
+      // 지금 보고 있는 화면이 이 서버의 모드 탭이면 새로 그린다
+      if (state.page === 'server' && state.selected === s.id && state.tab === 'addons') renderTab();
       if (!r || r === true) return;
       for (const p of r.packs || []) {
         const extra = [p.disabled.length ? `화면 전용 모드 ${p.disabled.length}개는 꺼 둠` : null, p.failed.length ? `${p.failed.length}개 받기 실패` : null].filter(Boolean).join(' · ');
@@ -985,7 +1081,17 @@
         else toast(`${a.title} 추가${how}${r.needsRestart ? ' — 재시작 시 적용' : ''}`, { kind: 'ok', timeout: 6000 });
       }
       for (const x of r.rejected) toast(`${x.file} 추가 불가 — ${x.reason}`, { kind: 'error', timeout: 8000 });
-      refreshInstalled();
+    };
+    // 넣는 중인 작업이 있으면 진행 막대와 마지막 진행 상황을 다시 보여 주고, 추가 버튼은 막는다
+    const showJob = () => {
+      const job = state.addonJobs[s.id];
+      progressBox.classList.toggle('hidden', !job);
+      if (job) {
+        const p = state.progress[`addon-${s.id}`] || {};
+        bar.set(p.percent || 0);
+        barLabel.textContent = p.text || '파일 확인 중';
+      }
+      for (const b of dropZone.querySelectorAll('button')) b.disabled = !!job;
     };
     const fileExt = s.type === 'vanilla' ? '.zip' : s.type === 'paper' ? '.jar' : '.jar · 모드팩(.zip · .mrpack)';
     const dropZone = h(
@@ -1025,26 +1131,7 @@
     const renderPager = (total) => {
       const pages = Math.min(Math.ceil(total / PAGE), MAX_PAGES);
       if (pages <= 1) return put(pager);
-      const cur = q.page;
-      // 처음 · 현재 주변 · 끝 번호만 보여준다 (예: 1 … 4 5 6 … 20)
-      const nums = [...new Set([0, cur - 2, cur - 1, cur, cur + 1, cur + 2, pages - 1])].filter((n) => n >= 0 && n < pages).sort((a, b) => a - b);
-      const items = [];
-      nums.forEach((n, i) => {
-        if (i && n - nums[i - 1] > 1) items.push(h('span.pager-gap.dim', null, '…'));
-        items.push(
-          h(
-            `button.pager-num${n === cur ? '.on' : ''}`,
-            { type: 'button', onclick: () => n !== cur && goPage(n), 'aria-current': n === cur ? 'page' : null, 'aria-label': `${n + 1}페이지` },
-            h('span.txt.num', null, String(n + 1)),
-          ),
-        );
-      });
-      put(
-        pager,
-        button('이전', () => goPage(cur - 1), { small: true, icon: '‹', disabled: cur === 0 }),
-        h('div.pager-nums', null, items),
-        button('다음', () => goPage(cur + 1), { small: true, icon: '›', disabled: cur >= pages - 1 }),
-      );
+      put(pager, ...pagerButtons(q.page, pages, goPage));
     };
 
     const doSearch = async () => {
@@ -1127,41 +1214,60 @@
         }, { name: '종류' })
       : null;
 
+    // 위: 설치됨 / 찾기 (나란히 두지 않고 한 번에 하나 — 목록이 길어도 한 화면에서 다룬다)
+    state.addonView = state.addonView || 'installed';
+    const installedPanel = h('div.stack');
+    const searchPanel = h('div.stack');
+    const viewSeg = seg([{ value: 'installed', label: `설치됨` }, { value: 'search', label: 'Modrinth에서 찾기' }], state.addonView, (v) => {
+      state.addonView = v;
+      installedPanel.hidden = v !== 'installed';
+      searchPanel.hidden = v !== 'search';
+    }, { name: '보기' });
+    const filterField = input(lq.text, (v) => {
+      lq.text = v;
+      lq.page = 0;
+      drawInstalled();
+    }, { placeholder: `${t.addon} 이름이나 파일 이름으로 거르기` });
+    const showSeg = seg([{ value: 'all', label: '전체' }, { value: 'on', label: '켜짐' }, { value: 'off', label: '꺼짐' }, { value: 'problem', label: '확인 필요' }], lq.show, (v) => {
+      lq.show = v;
+      lq.page = 0;
+      drawInstalled();
+    }, { name: '상태' });
+    const tools = h(
+      'div.inline',
+      null,
+      button('모두 업데이트', async () => {
+        const n = await call('addons:update', s.id);
+        if (n !== undefined) {
+          toast(n ? `${n}개 새 버전으로 교체` : '모두 최신', { kind: 'ok' });
+          refreshInstalled();
+        }
+      }, { small: true, icon: '⬆' }),
+      MOD_TYPES.includes(s.type) || hybrid
+        ? button('접속용 mods.zip', async () => {
+            const r = await call('addons:exportModsZip', s.id);
+            if (r && r !== true) toast(`mods.zip 저장 — 모드 ${r.count}개 · 압축을 풀어 .minecraft/mods 에 넣기 (${s.type === 'fabric' ? 'Fabric Loader' : s.type === 'neoforge' ? 'NeoForge' : 'Forge'} ${r.loader || ''} · 마인크래프트 ${r.minecraft})`.replace('  ', ' '), { kind: 'ok', timeout: 10000 });
+          }, { small: true, kind: 'primary', icon: '⇪', title: '접속할 때 필요한 모드 jar 파일을 mods.zip 으로 내보내기 (서버 전용 모드 제외)' })
+        : null,
+    );
+    append(installedPanel, [
+      h('div.card', null,
+        h('div.card-head', null, h('div', null, h('h2', null, `설치된 ${t.addon}`), installedNote), tools),
+        dropZone,
+        h('div.addon-filter', null, filterField, showSeg),
+        installed,
+        installedPager,
+      ),
+    ]);
+    append(searchPanel, [append(resultsCard, [h('div.card-head', null, h('div', null, h('h2', null, 'Modrinth에서 찾기'), resultNote)), h('div.stack', null, kindSeg ? h('div.sort-row', null, h('span.note', null, '종류'), kindSeg) : null, searchField, h('div.sort-row', null, h('span.note', null, '정렬'), sortSeg), results, pager)])]);
+    installedPanel.hidden = state.addonView !== 'installed';
+    searchPanel.hidden = state.addonView !== 'search';
+
     refreshInstalled();
     doSearch();
+    setTimeout(showJob);
 
-    return h(
-      'div.grid.grid-2',
-      null,
-      h(
-        'div.card',
-        null,
-        h(
-          'div.card-head',
-          null,
-          h('div', null, h('h2', null, `설치된 ${t.addon}`), h('div.note', null, `${t.folder} 폴더 · 끄면 파일 이름 뒤에 .disabled 추가`)),
-          h(
-            'div.inline',
-            null,
-            button('모두 업데이트', async () => {
-              const n = await call('addons:update', s.id);
-              if (n !== undefined) {
-                toast(n ? `${n}개 새 버전으로 교체` : '모두 최신', { kind: 'ok' });
-                refreshInstalled();
-              }
-            }, { small: true, icon: '⬆' }),
-            MOD_TYPES.includes(s.type) || hybrid
-              ? button('접속용 mods.zip', async () => {
-                  const r = await call('addons:exportModsZip', s.id);
-                  if (r && r !== true) toast(`mods.zip 저장 — 모드 ${r.count}개 · 압축을 풀어 .minecraft/mods 에 넣기 (${s.type === 'fabric' ? 'Fabric Loader' : s.type === 'neoforge' ? 'NeoForge' : 'Forge'} ${r.loader || ''} · 마인크래프트 ${r.minecraft})`.replace('  ', ' '), { kind: 'ok', timeout: 10000 });
-                }, { small: true, kind: 'primary', icon: '⇪', title: '접속할 때 필요한 모드 jar 파일을 mods.zip 으로 내보내기 (서버 전용 모드 제외)' })
-              : null,
-          ),
-        ),
-        h('div.stack', null, installed, dropZone),
-      ),
-      append(resultsCard, [h('div.card-head', null, h('div', null, h('h2', null, 'Modrinth에서 찾기'), resultNote)), h('div.stack', null, kindSeg ? h('div.sort-row', null, h('span.note', null, '종류'), kindSeg) : null, searchField, h('div.sort-row', null, h('span.note', null, '정렬'), sortSeg), progressBox, results, pager)]),
-    );
+    return h('div.stack', { style: { gap: '12px' } }, h('div.addon-top', null, viewSeg), progressBox, installedPanel, searchPanel);
   }
 
   // 백업
@@ -1584,10 +1690,7 @@
       'div.create-head',
       null,
       h('div', null, h('h1', null, title), h('p', { style: { marginTop: '6px' } }, sub)),
-      seg([{ value: 'new', label: '새로 만들기' }, { value: 'import', label: '기존 서버 가져오기' }], state.createMode || 'new', (v) => {
-        state.createMode = v;
-        render();
-      }),
+      seg([{ value: 'new', label: '새로 만들기' }, { value: 'import', label: '기존 서버 가져오기' }], state.createMode || 'new', (v) => switchCreateMode(v)),
     );
   }
 
@@ -2047,7 +2150,7 @@
               },
             }
           : null;
-        renderSide();
+        updateCreateGo();
       }
       put(
         body,

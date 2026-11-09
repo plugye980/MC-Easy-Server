@@ -1973,55 +1973,38 @@
   /* ════════════ 새로 고침 — 누른 자리에서 충격파가 퍼지며, 지나간 칸이 새 화면으로 바뀐다 (테마 전환) ════════════ */
   const oldSnap = document.createElement('canvas');
   const oldSnapG = oldSnap.getContext('2d');
-  const wave = { on: false, t0: 0, o: [0, 0], v: 1.6, done: null };
-  const oldMask = document.createElement('canvas');
-  const oldMaskG = oldMask.getContext('2d');
+  const wave = { on: false, t0: 0, o: [0, 0], v: 2.2, done: null };
+  /* 패널 하나하나가 새로 고쳐진다: 누른 자리에서 가까운 칸부터(묶음마다 조금씩 어긋나게) 잠깐 밝아졌다가 새 색으로 바뀐다.
+     칸 모양(평면 삼각형)으로 나누므로 화면이 정확히 칸 단위로 바뀐다. */
   function drawRefresh(now) {
-    const R = (now - wave.t0) * wave.v;
-    const SOFT = 110;
-    // 지나간 자리는 새 화면, 아직 안 지나간 자리는 옛 화면 — 경계는 부드럽게
-    if (oldMask.width !== canvas.width || oldMask.height !== canvas.height) {
-      oldMask.width = canvas.width;
-      oldMask.height = canvas.height;
-    }
-    const g = oldMaskG;
-    g.setTransform(1, 0, 0, 1, 0, 0);
-    g.globalCompositeOperation = 'source-over';
-    g.clearRect(0, 0, oldMask.width, oldMask.height);
-    g.drawImage(oldSnap, 0, 0);
-    g.globalCompositeOperation = 'destination-out';
-    const ox2 = wave.o[0] * D;
-    const oy2 = wave.o[1] * D;
-    const r0 = Math.max(0, (R - SOFT) * D);
-    const r1 = (R + SOFT * 0.4) * D;
-    const rg = g.createRadialGradient(ox2, oy2, r0, ox2, oy2, Math.max(r0 + 1, r1));
-    rg.addColorStop(0, 'rgba(0,0,0,1)');
-    rg.addColorStop(1, 'rgba(0,0,0,0)');
-    g.fillStyle = rg;
-    g.beginPath();
-    g.arc(ox2, oy2, Math.max(r0 + 1, r1), 0, Math.PI * 2);
-    g.fill();
-    g.fillStyle = '#000';
-    g.beginPath();
-    g.arc(ox2, oy2, r0, 0, Math.PI * 2);
-    g.fill();
-    g.globalCompositeOperation = 'source-over';
-    ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.drawImage(oldMask, 0, 0);
-    ctx.restore();
-    // 파면이 지나가는 칸이 잠깐 밝아진다 (새로 고쳐지는 패널)
-    const front = new Path2D();
+    const t = now - wave.t0;
+    const bins = [new Path2D(), new Path2D(), new Path2D(), new Path2D()];
+    const levels = [1, 0.72, 0.42, 0.16];
+    const flash = new Path2D();
+    let pending = false;
     eachCell((r, kk, tt, j) => {
       const T = tri(r, kk, tt);
       const c = centroid(T);
-      const d = Math.hypot(c[0] - wave.o[0], c[1] - wave.o[1]) + groupOf(r, kk, j, c).h * 70;
-      if (d < R && d > R - 120) addShape(front, T);
+      const delay = Math.hypot(c[0] - wave.o[0], c[1] - wave.o[1]) / wave.v + groupOf(r, kk, j, c).h * 260;
+      const u = (t - delay) / 380;
+      if (u < 1) pending = true;
+      const a = 1 - easeIO(clamp01(u)); // 옛 화면이 남은 정도
+      if (a > 0.05) addShape(bins[a > 0.9 ? 0 : a > 0.6 ? 1 : a > 0.3 ? 2 : 3], T);
+      if (u > 0.15 && u < 0.6) addShape(flash, T);
+    });
+    bins.forEach((path, i) => {
+      ctx.save();
+      ctx.setTransform(D, 0, 0, D, 0, 0);
+      ctx.clip(path);
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.globalAlpha = levels[i];
+      ctx.drawImage(oldSnap, 0, 0);
+      ctx.restore();
     });
     ctx.setTransform(D, 0, 0, D, 0, 0);
-    ctx.fillStyle = root.dataset.theme === 'dark' ? 'rgba(143, 168, 255, 0.10)' : 'rgba(255, 255, 255, 0.35)';
-    ctx.fill(front);
-    if (R - SOFT > Math.hypot(W, H) + 200) {
+    ctx.fillStyle = root.dataset.theme === 'dark' ? 'rgba(143, 168, 255, 0.16)' : 'rgba(255, 255, 255, 0.5)';
+    ctx.fill(flash);
+    if (!pending) {
       wave.on = false;
       const cb = wave.done;
       wave.done = null;
@@ -2091,6 +2074,17 @@
     dirty = false;
     if (tr.live) stepTransition(now);
     if ((power.phase === 'boot' || power.phase === 'up') && now - power.t0 > power.spec.end + 50) power.phase = 'on';
+    if (power.phase === 'down' && now - power.t0 > power.spec.last + power.spec.dur + 60) {
+      power.phase = 'black';
+      if (power.spec.done) power.spec.done();
+    }
+    if (power.phase === 'black') {
+      ctx.setTransform(D, 0, 0, D, 0, 0);
+      ctx.fillStyle = OFF_FILL;
+      ctx.fillRect(0, 0, W, H);
+      gridLines(ctx, DARK_LINE);
+      return;
+    }
     if (power.phase === 'off') {
       drawOff(now);
       edgeFX();
@@ -2107,7 +2101,7 @@
     }
     drawScene();
     ctx.setTransform(D, 0, 0, D, 0, 0);
-    if (power.phase === 'boot' || power.phase === 'up') drawCover(now);
+    if (power.phase === 'boot' || power.phase === 'up' || power.phase === 'down') drawCover(now);
     if (power.phase === 'switch') compositeSwitch(now);
     edgeFX();
     if (power.phase === 'on') drawBrandOnScene();
@@ -2201,6 +2195,12 @@
       runLog(sp);
       setPower('boot', sp);
       return wait(sp.uiAt);
+    },
+    /** 종료 — 패널이 가장자리부터 차례로 꺼지고 검은 화면이 된다 */
+    shutdown() {
+      return new Promise((res) => {
+        setPower('down', { dir: 'off', faults: false, start: 0, last: 1100, dur: 500, done: () => setTimeout(res, 350) });
+      });
     },
     /** 배경 재정렬 — 화면을 바꿀 때 */
     arrange(name, seed) {

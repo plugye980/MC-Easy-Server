@@ -1,24 +1,32 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
-  <!-- 사이드바 로고(34px 판, 22px 안쪽 네모)를 그대로 키운 앱 아이콘 -->
+  <!-- MCES 로고: 코발트 유리 네모 + 흰 네모(플러그인 서버 표시) + 유리 조각 한 줄기. 앱 안 로고·로딩 화면과 같은 그림 -->
   <defs>
-    <linearGradient id="face" x1="0.18" y1="0" x2="0.82" y2="1">
-      <stop offset="0" stop-color="#3fa3d6"/>
-      <stop offset="1" stop-color="#2b86b8"/>
+    <linearGradient id="face" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1530e6"/>
+      <stop offset="0.42" stop-color="#2a4dff"/>
+      <stop offset="0.7" stop-color="#5b78ff"/>
+      <stop offset="1" stop-color="#8f98ad"/>
     </linearGradient>
-    <linearGradient id="lit" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#ffffff" stop-opacity="0.28"/>
-      <stop offset="0.12" stop-color="#ffffff" stop-opacity="0"/>
+    <radialGradient id="glow" cx="0.7" cy="0.25" r="0.6">
+      <stop offset="0" stop-color="#aac8ff" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#aac8ff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="shade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0.35" stop-color="#0a1030" stop-opacity="0"/>
+      <stop offset="1" stop-color="#0a1030" stop-opacity="0.35"/>
     </linearGradient>
-    <filter id="well" x="-20%" y="-20%" width="140%" height="140%">
-      <!-- 안쪽 네모의 파인 그늘(위에서 오는 빛) -->
-      <feOffset dy="40"/><feGaussianBlur stdDeviation="40" result="b"/>
-      <feComposite in="SourceAlpha" in2="b" operator="arithmetic" k2="-1" k3="1" result="shadow"/>
-      <feFlood flood-color="#1c5f86" flood-opacity="0.35"/>
-      <feComposite in2="shadow" operator="in"/>
-      <feComposite in2="SourceGraphic" operator="over"/>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="22"/>
     </filter>
+    <clipPath id="box"><rect x="112" y="112" width="800" height="800" rx="64"/></clipPath>
   </defs>
-  <rect x="32" y="32" width="960" height="960" rx="282" fill="url(#face)"/>
-  <rect x="32" y="32" width="960" height="960" rx="282" fill="url(#lit)"/>
-  <rect x="201.5" y="201.5" width="621" height="621" rx="141" fill="#fbfeff" filter="url(#well)"/>
+  <rect x="132" y="150" width="760" height="760" rx="64" fill="#1830c8" opacity="0.35" filter="url(#soft)"/>
+  <g clip-path="url(#box)">
+    <rect x="112" y="112" width="800" height="800" fill="url(#face)"/>
+    <rect x="112" y="112" width="800" height="800" fill="url(#glow)"/>
+    <polygon points="600,112 680,112 452,912 372,912" fill="#d6e2f0" opacity="0.35"/>
+    <polygon points="112,700 112,912 330,912" fill="#7884a3" opacity="0.35"/>
+    <rect x="112" y="112" width="800" height="800" fill="url(#shade)"/>
+  </g>
+  <rect x="264" y="264" width="496" height="496" rx="14" fill="#ffffff"/>
 </svg>
