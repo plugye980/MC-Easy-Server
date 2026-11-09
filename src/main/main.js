@@ -307,7 +307,13 @@ function registerIpc() {
         return `${file} 비활성화 — 재시작 시 적용`;
       }
       case 'disable-mod': {
-        const file = await manager.disableModById(id, payload.modId);
+        let file = payload.file;
+        if (file) manager.setAddonEnabled(id, file, false);
+        else file = await manager.disableModById(id, payload.modId);
+        if (payload.restart) {
+          await manager.start(id);
+          return `${file} 끄고 다시 켜는 중`;
+        }
         return `${file} 비활성화`;
       }
       case 'install-deps': {
