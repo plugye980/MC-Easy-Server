@@ -580,31 +580,6 @@
     const yt = y0 + (rows.top + 1) * TH;
     const seen = project([W / 2, yt], OFF)[1];
     const cy = Math.max(18 * u, (yt + TH - seen) / 2 / (1 + OFF * KP));
-    // 왼쪽: 단말 상태 원 · 경로 문구 · 터널 신호
-    const x = PAD + Math.max(W * 0.19, bandStartX() + 36 * u);
-    const okState = info.ok !== false;
-    g.beginPath();
-    g.arc(x + 16 * u, cy, 16 * u, 0, Math.PI * 2);
-    g.fillStyle = okState ? P.chip : P.bad;
-    g.fill();
-    g.strokeStyle = '#fff';
-    g.lineWidth = 1.8 * u;
-    g.lineCap = 'round';
-    g.lineJoin = 'round';
-    g.beginPath();
-    if (okState) {
-      g.moveTo(x + 9.5 * u, cy + 0.5 * u);
-      g.lineTo(x + 14.5 * u, cy + 5.5 * u);
-      g.lineTo(x + 23 * u, cy - 5 * u);
-    } else {
-      g.moveTo(x + 11 * u, cy - 5 * u);
-      g.lineTo(x + 21 * u, cy + 5 * u);
-      g.moveTo(x + 21 * u, cy - 5 * u);
-      g.lineTo(x + 11 * u, cy + 5 * u);
-    }
-    g.stroke();
-    const tw = Math.max(text(g, info.tag || '[MCES ROUTE]', x + 44 * u, cy - 7 * u, 11, { weight: 600, track: 0.5 }), text(g, info.line || '', x + 44 * u, cy + 8 * u, 11, { color: okState ? P.ink2 : P.bad }));
-    wifi(g, x + (44 + 18) * u + tw, cy - 3 * u, info.link ? P.ink : P.faint);
     // 오른쪽: 코드와 PC 사양 — 띠 오른쪽 끝(켜진 사선이 시작하는 곳) 앞에서 끝낸다
     const re = fromC(rows.top + 1, bandRight);
     const reX = Math.min(...tri(rows.top + 1, re.k, re.t).map((q) => q[0]));
@@ -613,32 +588,6 @@
     g.fillStyle = P.gold;
     g.fillRect(rx - g.measureText(info.code || 'MC.ES').width - 14 * u, cy - 13 * u, 2 * u, 12 * u);
     text(g, info.right || '', rx, cy + 10 * u, 10, { align: 'right', color: P.ink2, mono: true });
-    // 가운데: 메인 시스템 표식 — 워드마크와 금색 마름모. 왼쪽·오른쪽 글자 사이에 자리가 있을 때만
-    const leftEnd = x + (44 + 40) * u + tw;
-    g.font = `400 ${10 / k}px ${MONO}`;
-    const rightStart = rx - Math.max(g.measureText(info.right || '').width, 120 * u);
-    const cx = (leftEnd + rightStart) / 2;
-    if (rightStart - leftEnd > 240 * u) {
-      text(g, 'SCRF', cx, cy - 6 * u, 17, { weight: 800, align: 'center', track: 6 });
-      text(g, 'SECTOR A · MCES', cx, cy + 11 * u, 9, { mono: true, align: 'center', color: P.ink2, track: 2 });
-      g.fillStyle = P.gold;
-      g.strokeStyle = P.gold;
-      g.lineWidth = u;
-      for (const sd of [-1, 1]) {
-        const gx = cx + sd * 46 * u;
-        g.beginPath();
-        g.moveTo(gx, cy - 10 * u);
-        g.lineTo(gx + 3.5 * u, cy - 6.5 * u);
-        g.lineTo(gx, cy - 3 * u);
-        g.lineTo(gx - 3.5 * u, cy - 6.5 * u);
-        g.closePath();
-        g.fill();
-        g.beginPath();
-        g.moveTo(gx + sd * 8 * u, cy - 6.5 * u);
-        g.lineTo(gx + sd * 30 * u, cy - 6.5 * u);
-        g.stroke();
-      }
-    }
     band.dirty = false;
   }
   const BEND = 22;
@@ -792,6 +741,931 @@
     root.style.setProperty('--band-start', `${toScreen([bandStartX(), 0])[0].toFixed(1)}px`);
   }
 
+  /* ════════════ 패널 점등 · 소등 ════════════
+     SCRF 구동 순서를 그대로 옮긴 것. 화면 전체가 패널 칸으로 되어 있고, 칸마다 검은 덮개가 걷히며(또는 덮이며) 켜진다.
+     - 불규칙한 묶음: 흩뿌린 씨앗 점 중 가장 가까운 것에 칸을 붙인다. 같은 묶음은 함께 켜지고 함께 깜빡인다
+     - 오류 있음(faulty): 묶음 일부가 색이 갈라지거나 엉뚱한 자리를 비춘 채로 켜지고, 화면이 툭 어두워지거나 가로로 찢어진다
+     - 오류 없음(clean): 깜빡임 없이 한 번에 */
+  const OFF_FILL = '#04060a';
+  const DARK_LINE = 'rgba(120, 150, 180, 0.13)';
+  function hash(a, b, c) {
+    let h = (a * 73856093) ^ (b * 19349663) ^ (c * 83492791);
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967295;
+  }
+  let groupCache = {};
+  const SLICES = [45, 45, 70, 130, 130]; // 빠른 깜빡임과 느린 깜빡임이 섞인다
+  function groupOf(r, kk, j, c) {
+    const key = `${r},${kk},${j}`;
+    if (groupCache[key]) return groupCache[key];
+    const G = S * 1.35;
+    const gi = Math.floor(c[0] / G);
+    const gj = Math.floor(c[1] / G);
+    let best = null;
+    let bd = 1e9;
+    for (let a = -1; a <= 1; a++) {
+      for (let b = -1; b <= 1; b++) {
+        const i = gi + a;
+        const jj = gj + b;
+        const sx = (i + 0.15 + 0.7 * hash(i, jj, 11)) * G;
+        const sy = (jj + 0.15 + 0.7 * hash(i, jj, 13)) * G;
+        const w = 0.55 + 0.9 * hash(i, jj, 17);
+        const d = Math.hypot(c[0] - sx, c[1] - sy) / w;
+        if (d < bd) {
+          bd = d;
+          best = [i, jj];
+        }
+      }
+    }
+    const solo = hash(r, kk, j + 40) < 0.14;
+    const id = solo ? [r * 131 + 7, kk * 71 + j] : best;
+    const fr = hash(id[0], id[1], 61);
+    const g = {
+      seed: id[0] * 977 + id[1] * 31 + (solo ? 5 : 0),
+      h: hash(id[0], id[1], solo ? 9 : 5),
+      slice: SLICES[Math.floor(hash(id[0], id[1], 23) * SLICES.length)],
+      fault: fr < 0.12 ? 'ca' : fr < 0.24 ? 'shift' : null,
+    };
+    groupCache[key] = g;
+    return g;
+  }
+  // 칸 하나의 점등 — [검은 덮개, 흰 번쩍임]
+  function tileLight(u, seed, t, slice, clean) {
+    if (u <= 0) return [1, 0];
+    if (u >= 1) return [0, 0];
+    if (clean) {
+      const e = 1 - Math.pow(1 - u, 3);
+      return [1 - e, u < 0.5 ? 0.22 * Math.sin((u / 0.5) * Math.PI) : 0];
+    }
+    const b = Math.floor(t / slice);
+    const r = hash(seed, b, 31);
+    const r2 = hash(seed, b, 57);
+    if (u < 0.55) {
+      if (r < 0.42) return [0.96, 0];
+      if (r < 0.66) return [0.55, r2 < 0.2 ? 0.25 : 0];
+      return [0.12 + 0.12 * r2, r2 > 0.82 ? 0.5 : 0.08];
+    }
+    if (u < 0.82) {
+      if (r < 0.14) return [0.75, 0];
+      return [0.06, r2 > 0.9 ? 0.3 : 0];
+    }
+    return [0.06 * (1 - (u - 0.82) / 0.18), 0];
+  }
+  // 칸 하나의 소등 — 잠깐 밝아졌다가 덮인다
+  function tileDark(u) {
+    if (u <= 0) return [0, 0];
+    if (u >= 1) return [1, 0];
+    if (u < 0.22) return [0, 0.3 * Math.sin((u / 0.22) * Math.PI)];
+    const e = (u - 0.22) / 0.78;
+    return [1 - Math.pow(1 - e, 2), 0];
+  }
+  function convexHull(pts) {
+    const p = pts.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    const cr = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+    const lo = [];
+    const up = [];
+    for (const q of p) {
+      while (lo.length >= 2 && cr(lo[lo.length - 2], lo[lo.length - 1], q) <= 0) lo.pop();
+      lo.push(q);
+    }
+    for (let i = p.length - 1; i >= 0; i--) {
+      const q = p[i];
+      while (up.length >= 2 && cr(up[up.length - 2], up[up.length - 1], q) <= 0) up.pop();
+      up.push(q);
+    }
+    return lo.slice(0, -1).concat(up.slice(0, -1));
+  }
+  // 잘못 켜지는 패널에 쓸 깨끗한 화면 사본 — 원래 크기 1장, 색 갈라짐용 1/4 크기 채널 3장
+  const snap = document.createElement('canvas');
+  const snapG = snap.getContext('2d');
+  const chans = [qcv(), qcv(), qcv()];
+  const chanColor = ['#ff0000', '#00ff00', '#0000ff'];
+  function takeSnap() {
+    if (snap.width !== canvas.width || snap.height !== canvas.height) {
+      snap.width = canvas.width;
+      snap.height = canvas.height;
+    }
+    snapG.drawImage(canvas, 0, 0);
+    const w = Math.ceil(innerWidth * Q);
+    const h = Math.ceil(innerHeight * Q);
+    chans.forEach((d, i) => {
+      if (d.c.width !== w || d.c.height !== h) {
+        d.c.width = w;
+        d.c.height = h;
+      }
+      const g = d.g;
+      g.globalCompositeOperation = 'source-over';
+      g.filter = 'blur(1.5px)';
+      g.drawImage(canvas, 0, 0, w, h);
+      g.filter = 'none';
+      g.globalCompositeOperation = 'multiply';
+      g.fillStyle = chanColor[i];
+      g.fillRect(0, 0, w, h);
+      g.globalCompositeOperation = 'source-over';
+    });
+  }
+  // 색 번짐 줄무늬 — 신호가 갈라진 화면처럼 무지개빛 가로 줄 (한 번만 만든다)
+  const streak = (() => {
+    const c = document.createElement('canvas');
+    c.width = 256;
+    c.height = 256;
+    const g = c.getContext('2d');
+    const cols2 = ['#ff2a4a', '#ffb02a', '#36ff6a', '#2ad6ff', '#4a5cff', '#d22aff'];
+    g.fillStyle = '#06080e';
+    g.fillRect(0, 0, 256, 256);
+    g.filter = 'blur(4px)';
+    for (let i = 0; i < 26; i++) {
+      g.globalAlpha = 0.35 + 0.5 * hash(i, 3, 9);
+      g.fillStyle = cols2[i % cols2.length];
+      g.fillRect(-20 + hash(i, 1, 2) * 60, hash(i, 4, 5) * 256, 120 + hash(i, 6, 7) * 200, 3 + hash(i, 8, 9) * 12);
+    }
+    return c;
+  })();
+  function drawFault(f) {
+    const c = centroid(f.shape);
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(f.shape[0][0], f.shape[0][1]);
+    for (let i = 1; i < f.shape.length; i++) ctx.lineTo(f.shape[i][0], f.shape[i][1]);
+    ctx.closePath();
+    ctx.clip();
+    if (f.type === 'shift') {
+      // 자기 자리가 아닌 화면을, 배율도 틀린 채로 비춘다
+      const dx = (hash(f.seed, f.fb, 81) - 0.5) * S * 2.2;
+      const dy = (hash(f.seed, f.fb, 83) - 0.5) * S * 1.4;
+      const z = 1.5 + hash(f.seed, f.fb, 89) * 1.3;
+      ctx.translate(c[0], c[1]);
+      ctx.scale(z, z);
+      ctx.translate(-c[0] + dx, -c[1] + dy);
+      ctx.drawImage(snap, 0, 0, W, H);
+      ctx.setTransform(D, 0, 0, D, 0, 0);
+      ctx.fillStyle = 'rgba(24, 44, 120, 0.38)';
+      ctx.fillRect(0, 0, W, H);
+      const ly = c[1] + (hash(f.seed, f.fb, 91) - 0.5) * S * 0.6;
+      ctx.fillStyle = 'rgba(160, 230, 255, 0.85)';
+      ctx.fillRect(0, ly, W, 1.5);
+    } else {
+      // 색이 갈라진 채로 켜진다 — 채널이 크게 밀리고, 무지개빛 가로 줄이 번진다
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      const d = (14 + 30 * hash(f.seed, f.fb, 85)) * dpr;
+      const v = (hash(f.seed, f.fb, 87) - 0.5) * 16 * dpr;
+      ctx.drawImage(streak, 0, hash(f.seed, f.fb, 93) * 120, 256, 136, 0, 0, canvas.width, canvas.height);
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = 0.26;
+      ctx.drawImage(chans[0].c, -d, v, canvas.width, canvas.height);
+      ctx.drawImage(chans[1].c, d * 0.3, 0, canvas.width, canvas.height);
+      ctx.drawImage(chans[2].c, d, -v, canvas.width, canvas.height);
+      ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = 'source-over';
+    }
+    ctx.restore();
+  }
+  // 그리드 선만 (X자 없이) — 꺼진 화면에서 쓴다
+  function gridLines(g, color) {
+    const rMin = Math.floor(-y0 / TH) - 1;
+    const rMax = Math.ceil((H - y0) / TH) + 1;
+    g.lineWidth = 1;
+    g.strokeStyle = color;
+    g.beginPath();
+    for (let r = rMin; r <= rMax; r++) {
+      const y = y0 + r * TH;
+      g.moveTo(0, y);
+      g.lineTo(W, y);
+    }
+    const span = Math.ceil((W + H) / S) + 2;
+    for (let kk = -span; kk <= span; kk++) {
+      const bx = x0 + kk * S;
+      g.moveTo(bx + (-20 - y0) / R3, -20);
+      g.lineTo(bx + (H + 20 - y0) / R3, H + 20);
+      g.moveTo(bx - (-20 - y0) / R3, -20);
+      g.lineTo(bx - (H + 20 - y0) / R3, H + 20);
+    }
+    g.stroke();
+  }
+
+  /* ════════════ 패널 디스플레이 — 구동 로그 ════════════
+     꺼져 있는 패널 몇 장이 작은 화면으로 켜져 글자를 띄운다. 칸 모양 그대로 잘라 그린다. */
+  const MONO_F = MONO;
+  let logScreen = { tiles: [], keys: {}, cells: [], box: [0, 0, 0, 0] };
+  function screenFrom(rs, c0, c1) {
+    const sc = { tiles: [], keys: {}, cells: [], box: null };
+    const xs = [];
+    const ys = [];
+    for (const r of rs) {
+      for (let c = c0; c <= c1; c++) {
+        const f = fromC(r, c);
+        const T = tri(r, f.k, f.t);
+        sc.tiles.push(T);
+        sc.keys[`${r},${f.k},${f.t}`] = true;
+        sc.cells.push({ T, r, k: f.k, j: f.t === 'u' ? 1 : 0 });
+        for (const p of T) {
+          xs.push(p[0]);
+          ys.push(p[1]);
+        }
+      }
+    }
+    sc.box = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+    return sc;
+  }
+  function buildScreens() {
+    const rb = rows.bottom;
+    const cl = cols.left + 9;
+    logScreen = screenFrom([rb - 2, rb - 1], cl, cl + Math.max(10, Math.ceil(560 / (S / 2))));
+  }
+  const LOG_COLORS = { '': '#d9e4f0', 'is-dim': 'rgba(170, 186, 204, 0.55)', 'is-warn': '#e6b45a', 'is-done': '#8fa8ff', 'is-live': '#d9e4f0' };
+  const logCv = document.createElement('canvas');
+  const lg = logCv.getContext('2d');
+  const logTint = [document.createElement('canvas'), document.createElement('canvas')];
+  function tintOf(i, color) {
+    const c = logTint[i];
+    const g = c.getContext('2d');
+    if (c.width !== logCv.width || c.height !== logCv.height) {
+      c.width = logCv.width;
+      c.height = logCv.height;
+    }
+    g.globalCompositeOperation = 'source-over';
+    g.clearRect(0, 0, c.width, c.height);
+    g.drawImage(logCv, 0, 0);
+    g.globalCompositeOperation = 'source-in';
+    g.fillStyle = color;
+    g.fillRect(0, 0, c.width, c.height);
+    return c;
+  }
+  let logLines = [];
+  let logFx = {};
+  const rnd = (a, b) => a + Math.random() * (b - a);
+  function faultLook() {
+    return Math.random() < 0.5 ? { type: 'ca', d: rnd(2.5, 11) } : { type: 'shift', dx: rnd(-0.5, 0.5) * S, dy: Math.round(rnd(-2, 2)) * 17 + rnd(-3, 3) };
+  }
+  // 로그 칸의 글리치 — 안 걸림 / 어긋난 채 유지 / 복구 시도 중. 끝나기 전에 반드시 복구
+  function buildLogFx(sp) {
+    logFx = {};
+    if (sp.clean) return;
+    const quiet = Math.random() < 0.2;
+    const pStuck = rnd(0.08, 0.25);
+    const pRetry = rnd(0.12, 0.32);
+    for (const cell of logScreen.cells) {
+      if (quiet) continue;
+      const r = Math.random();
+      const key = `${cell.r},${cell.k},${cell.j}`;
+      const on = rnd(sp.start * 0.6, sp.logDone - 900);
+      const fix = sp.logDone - rnd(0, 500);
+      if (fix <= on + 200) continue;
+      if (r < pStuck) logFx[key] = { kind: 'stuck', on, fix, v: faultLook() };
+      else if (r < pStuck + pRetry) {
+        const mean = rnd(70, 420);
+        const seq = [];
+        let tt = on;
+        while (tt < fix) {
+          const len = Math.max(35, mean * -Math.log(1 - Math.random() * 0.98));
+          const q = Math.random();
+          seq.push({ until: Math.min(fix, tt + len), v: q < 0.25 ? null : q < 0.38 ? { type: 'off' } : faultLook() });
+          tt += len;
+        }
+        logFx[key] = { kind: 'retry', on, fix, seq };
+      }
+    }
+  }
+  function logFxAt(cell, t) {
+    const fx2 = logFx[`${cell.r},${cell.k},${cell.j}`];
+    if (!fx2 || t < fx2.on || t >= fx2.fix) return null;
+    if (fx2.kind === 'stuck') return fx2.v;
+    for (const s2 of fx2.seq) if (t < s2.until) return s2.v;
+    return null;
+  }
+  function drawLogText(sc, t, alpha) {
+    if (alpha <= 0.01) return;
+    const u = 1 / k;
+    const bx = sc.box;
+    const bw = bx[2] - bx[0];
+    const bh = bx[3] - bx[1];
+    const lh = 17 * u;
+    const cw = Math.ceil(bw * D);
+    const chh = Math.ceil(bh * D);
+    if (logCv.width !== cw || logCv.height !== chh) {
+      logCv.width = cw;
+      logCv.height = chh;
+    }
+    lg.setTransform(D, 0, 0, D, 0, 0);
+    lg.clearRect(0, 0, bw, bh);
+    // 왼쪽 변이 비스듬하니, 글자는 칸 하나만큼 안쪽에서 시작한다
+    const x = S * 0.75;
+    const y = 18 * u;
+    lg.font = `400 ${12 * u}px ${MONO_F}`;
+    lg.textAlign = 'left';
+    lg.textBaseline = 'middle';
+    lg.shadowColor = 'rgba(120, 180, 255, 0.55)';
+    lg.shadowBlur = 5;
+    const lines = logLines.slice(-Math.floor((bh - 20 * u) / lh));
+    lines.forEach((ln, i) => {
+      lg.fillStyle = LOG_COLORS[ln.cls || ''];
+      let txt = ln.text;
+      if (ln.cls === 'is-live' && Math.floor(performance.now() / 450) % 2 === 0) txt += '▌';
+      lg.fillText(txt, x, y + i * lh);
+    });
+    lg.shadowBlur = 0;
+    lg.globalCompositeOperation = 'destination-out';
+    lg.fillStyle = 'rgba(0,0,0,0.35)';
+    for (let yy = 0; yy < bh; yy += 3 * u) lg.fillRect(0, yy, bw, u);
+    lg.globalCompositeOperation = 'source-over';
+    let red = null;
+    let blue = null;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    for (const cell of sc.cells) {
+      const v = logFxAt(cell, t);
+      const st = v ? v.type : 'ok';
+      if (st === 'off') continue;
+      ctx.save();
+      ctx.beginPath();
+      addTri(cell.T);
+      ctx.clip();
+      if (st === 'shift') ctx.drawImage(logCv, bx[0] + v.dx, bx[1] + v.dy, bw, bh);
+      else if (st === 'ca') {
+        red = red || tintOf(0, '#ff3050');
+        blue = blue || tintOf(1, '#30a8ff');
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.drawImage(red, bx[0] - v.d, bx[1], bw, bh);
+        ctx.drawImage(blue, bx[0] + v.d, bx[1] + 1, bw, bh);
+        ctx.globalAlpha *= 0.55;
+        ctx.drawImage(logCv, bx[0], bx[1], bw, bh);
+      } else ctx.drawImage(logCv, bx[0], bx[1], bw, bh);
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+  // 구동 로그 — DOS 창처럼. 오류 문구는 매번 조금씩 다르게
+  const hex4 = () => `0X${(0x8000 + ((Math.random() * 0x7fff) | 0)).toString(16).toUpperCase()}`;
+  const hexId = () => `0x${(0x100 + ((Math.random() * 0xeff) | 0)).toString(16).toUpperCase()}`;
+  const pick = (list) => list[(Math.random() * list.length) | 0];
+  const WARNS = [
+    () => `[WARN] panel ${hexId()} signal split   — retry`,
+    () => `[WARN] panel ${hexId()} misaligned     — remap`,
+    () => `[WARN] panel ${hexId()} no response    — reboot`,
+    () => `[WARN] sync drift +${2 + ((Math.random() * 40) | 0)}ms     — resync`,
+    () => `[ERR ] frame ${hexId()} checksum fail — drop`,
+    () => `[WARN] chroma bus ${pick(['R', 'G', 'B'])} offset   — calibrate`,
+  ];
+  let logTimers = [];
+  function log(text, cls) {
+    const ln = { text, cls: cls || '' };
+    logLines.push(ln);
+    if (logLines.length > 40) logLines.shift();
+    return ln;
+  }
+  function runLog(sp) {
+    logTimers.forEach(clearTimeout);
+    logTimers = [];
+    logLines = [];
+    log('C:\\MCES> connect --host SCRF --sector A');
+    const conn = log('Connecting to SCRF', 'is-live');
+    let dots = 0;
+    const dotTimer = setInterval(() => {
+      dots = (dots + 1) % 4;
+      conn.text = `Connecting to SCRF${'.'.repeat(dots)}`;
+    }, 320);
+    const span = sp.last + sp.dur - sp.start;
+    const plan = [
+      [sp.start * 0.3, '[ OK ] link layer            port 0x3F7A'],
+      [sp.start * 0.55, '[ OK ] handshake             MCES/ORN'],
+      [sp.start * 0.8, '[ .. ] panel matrix          powering'],
+    ];
+    const nd = sp.clean ? 3 : 6;
+    for (let i = 0; i < nd; i++) plan.push([sp.start + span * (0.08 + (0.8 * i) / nd), 'dump']);
+    if (!sp.clean) {
+      const nw = 1 + ((Math.random() * 3) | 0);
+      const used = {};
+      for (let w = 0; w < nw; w++) {
+        let f;
+        do f = (Math.random() * WARNS.length) | 0;
+        while (used[f]);
+        used[f] = 1;
+        plan.push([sp.start + span * (0.15 + 0.6 * Math.random()), WARNS[f](), 'is-warn']);
+      }
+    } else plan.push([sp.start + span * 0.5, '[ OK ] panel matrix          0 faults']);
+    plan.push([sp.logDone - 400, '[ OK ] panel matrix          aligned']);
+    plan.push([sp.logDone, 'done']);
+    for (const it of plan) {
+      logTimers.push(
+        setTimeout(() => {
+          if (it[1] === 'dump') return log([hex4(), hex4(), hex4(), hex4(), hex4(), hex4()].join(' '), 'is-dim');
+          if (it[1] === 'done') {
+            clearInterval(dotTimer);
+            conn.text = 'Connecting to SCRF... OK';
+            conn.cls = '';
+            log('[DONE] connection established  — SCRF online', 'is-done');
+            log('C:\\MCES> _');
+            return null;
+          }
+          return log(it[1], it[2]);
+        }, it[0]),
+      );
+    }
+    logTimers.push(setTimeout(() => clearInterval(dotTimer), sp.logOff + 100));
+  }
+
+  /* ── 전원 상태: on(켜짐) / boot·up(켜지는 중) / down(꺼지는 중) / off(꺼짐, 로딩 화면) ── */
+  const power = { phase: 'off', t0: 0, spec: null };
+  function setPower(phase, spec) {
+    power.phase = phase;
+    power.t0 = performance.now();
+    power.spec = spec;
+    dirty = true;
+  }
+  function drawCover(now) {
+    const sp = power.spec;
+    const t = now - power.t0;
+    if (sp.faults && t > sp.start) takeSnap();
+    const rMin = Math.floor(-y0 / TH) - 2;
+    const rMax = Math.ceil((H - y0) / TH) + 2;
+    const diag = Math.hypot(W / 2, H / 2);
+    const faults = [];
+    const black = new Path2D();
+    const half = new Path2D();
+    const dim = new Path2D();
+    const flash = new Path2D();
+    const flash2 = new Path2D();
+    const addPath = (path, shape) => {
+      path.moveTo(shape[0][0], shape[0][1]);
+      for (let i = 1; i < shape.length; i++) path.lineTo(shape[i][0], shape[i][1]);
+      path.closePath();
+    };
+    for (let r = rMin; r <= rMax; r++) {
+      const o = x0 + ox(r);
+      const kMin = Math.floor(-o / S) - 2;
+      const kMax = Math.ceil((W - o) / S) + 2;
+      for (let kk = kMin; kk <= kMax; kk++) {
+        for (let j = 0; j < 2; j++) {
+          const tt = j ? 'u' : 'd';
+          const T = tri(r, kk, tt);
+          const c = centroid(T);
+          const dist = Math.min(1, Math.hypot(c[0] - W / 2, c[1] - H / 2) / diag);
+          const grp = groupOf(r, kk, j, c);
+          let start = sp.start + (grp.h * 0.65 + (sp.dir === 'on' ? dist : 1 - dist) * 0.35) * (sp.last - sp.start);
+          if (sp.log && logScreen.keys[`${r},${kk},${tt}`]) start = sp.logOff; // 로그를 띄운 패널은 로그가 끝난 뒤에 켜진다
+          const ut = (t - start) / sp.dur;
+          let L = sp.dir === 'on' ? tileLight(ut, grp.seed, t, grp.slice, !sp.faults) : tileDark(ut);
+          let fault = null;
+          if (sp.faults && grp.fault && ut > 0.12 && ut < 0.92) {
+            const fb = Math.floor(t / 160);
+            const fq = hash(grp.seed, fb, 77);
+            if (fq < 0.22) L = [1, 0];
+            else if (fq < 0.88) fault = { type: grp.fault, fb, seed: grp.seed };
+          }
+          if (!fault && L[0] <= 0.01 && L[1] <= 0.01) continue;
+          const tile = tiles[`${r},${kk},${tt}`];
+          let shape = T;
+          if (tile && tile.z > 0) shape = convexHull(T.concat(T.map((p) => project(p, tile.z))));
+          if (fault) {
+            fault.shape = shape;
+            faults.push(fault);
+            continue;
+          }
+          const path = L[0] > 0.9 ? black : L[0] > 0.4 ? half : L[0] > 0.1 ? dim : null;
+          if (path) addPath(path, shape);
+          const fp = L[1] > 0.35 ? flash : L[1] > 0.05 ? flash2 : null;
+          if (fp) addPath(fp, shape);
+        }
+      }
+    }
+    ctx.fillStyle = 'rgba(4, 6, 10, 0.97)';
+    ctx.fill(black);
+    ctx.fillStyle = 'rgba(4, 6, 10, 0.55)';
+    ctx.fill(half);
+    ctx.fillStyle = 'rgba(4, 6, 10, 0.18)';
+    ctx.fill(dim);
+    ctx.fillStyle = 'rgba(225, 242, 255, 0.32)';
+    ctx.fill(flash);
+    ctx.fillStyle = 'rgba(225, 242, 255, 0.18)';
+    ctx.fill(flash2);
+    faults.forEach(drawFault);
+    ctx.setTransform(D, 0, 0, D, 0, 0);
+    if (sp.log && t < sp.logOff) drawLogText(logScreen, t, Math.min(1, t / 200) * Math.min(1, (sp.logOff - t) / 250));
+    // 아직 꺼져 있는 칸 위로도 그리드 선이 남아 있게
+    const lineA = sp.dir === 'on' ? 1 - Math.max(0, Math.min(1, (t - sp.start) / (sp.last + sp.dur - sp.start))) : Math.max(0, Math.min(1, (t - sp.start) / (sp.last + sp.dur - sp.start)));
+    if (lineA > 0.01) {
+      ctx.globalAlpha = lineA;
+      gridLines(ctx, DARK_LINE);
+      ctx.globalAlpha = 1;
+    }
+    if (!sp.faults) return;
+    // 화면 전체의 흔들림: 밝기가 툭 떨어지는 순간과, 가로로 찢어져 밀리는 줄
+    const b = Math.floor(t / 160);
+    const u = Math.min(1, t / (sp.last + sp.dur));
+    if (hash(b, 1, 2) < 0.1 * (1 - u)) {
+      ctx.fillStyle = `rgba(4, 6, 10, ${(0.15 + 0.2 * hash(b, 2, 3)).toFixed(2)})`;
+      ctx.fillRect(0, 0, W, H);
+    }
+    const tears = hash(b, 4, 5) < 0.3 * (1 - u * 0.8) ? 1 + Math.floor(hash(b, 6, 7) * 2) : 0;
+    for (let n = 0; n < tears; n++) {
+      const ty = hash(b, n, 8) * innerHeight;
+      const th = 6 + hash(b, n, 9) * 38;
+      const dx = (hash(b, n, 10) - 0.5) * 60;
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.drawImage(canvas, 0, ty * dpr, canvas.width, th * dpr, dx * dpr, ty * dpr, canvas.width, th * dpr);
+      ctx.restore();
+    }
+  }
+  // 구동 시간표 (SCRF clean / long 값)
+  function bootSpec(faulty) {
+    const p = faulty ? { start: 1700, last: 4000, dur: 1500 } : { start: 700, last: 2100, dur: 700 };
+    const bootEnd = p.last + p.dur;
+    const logDone = bootEnd - 300;
+    const logOff = logDone + (faulty ? 900 : 600);
+    return { dir: 'on', faults: faulty, clean: !faulty, log: true, ...p, logDone, logOff, end: logOff + p.dur, uiAt: Math.max(bootEnd, logOff) + 200 };
+  }
+
+  /* ════════════ 로딩 화면 — 꺼진 패널 화면에 띄운다 ════════════
+     (첨부된 천궁 로더를 SCRF 테마로 옮긴 것: 신성 기하학 고리 · 떠오르는 빛 알갱이 · 가로지르는 빛의 띠 ·
+      파인 원판과 네 모서리 눈금 · 원 궤도 안의 삼각형 로고 · 상태 문구와 진행 막대)
+     금색 선은 코발트로, 금색은 점과 짧은 표식에만. 바탕은 꺼진 화면색. */
+  const LD = { on: false, t0: 0, cap: '', status: '', task: '', taskAt: 0, target: 0, shown: 0, doneAt: 0 };
+  const ease = (x) => 1 - Math.pow(1 - Math.max(0, Math.min(1, x)), 3);
+  const clamp01 = (x) => Math.max(0, Math.min(1, x));
+  const NUM = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII'];
+  const geoCv = qcv();
+  const motes = (() => {
+    let s0 = 7;
+    const R = () => {
+      s0 = (s0 * 16807) % 2147483647;
+      return s0 / 2147483647;
+    };
+    const out = [];
+    for (let z = 0; z < 34; z++) out.push({ x: R(), y: 0.3 + R() * 0.65, s: 1.5 + R() * 2.5, t: (7 + R() * 9) * 1000, dl: -R() * 12000 });
+    return out;
+  })();
+  const polar = (r, deg) => {
+    const a = ((deg - 90) * Math.PI) / 180;
+    return [r * Math.cos(a), r * Math.sin(a)];
+  };
+  // 경로를 진행도만큼만 긋는다 (점 목록, 닫힘 여부)
+  function partial(g, pts, p, closed) {
+    const P2 = closed ? pts.concat([pts[0]]) : pts;
+    let total = 0;
+    for (let i = 1; i < P2.length; i++) total += Math.hypot(P2[i][0] - P2[i - 1][0], P2[i][1] - P2[i - 1][1]);
+    let left = total * p;
+    g.moveTo(P2[0][0], P2[0][1]);
+    for (let i = 1; i < P2.length && left > 0; i++) {
+      const seg = Math.hypot(P2[i][0] - P2[i - 1][0], P2[i][1] - P2[i - 1][1]);
+      const f = Math.min(1, left / seg);
+      g.lineTo(P2[i - 1][0] + (P2[i][0] - P2[i - 1][0]) * f, P2[i - 1][1] + (P2[i][1] - P2[i - 1][1]) * f);
+      left -= seg;
+    }
+  }
+  function drawGeo(t, cx, cy, alpha) {
+    const u = 1 / k;
+    const size = Math.min(1.5 * Math.min(innerWidth, innerHeight), 1320) * u; // 장면 좌표
+    const s = size / 1000;
+    const g = geoCv.g;
+    if (geoCv.c.width !== canvas.width || geoCv.c.height !== canvas.height) {
+      geoCv.c.width = canvas.width;
+      geoCv.c.height = canvas.height;
+    }
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.clearRect(0, 0, geoCv.c.width, geoCv.c.height);
+    g.setTransform(D * s, 0, 0, D * s, D * cx, D * cy);
+    g.lineWidth = u / s;
+    const main = 'rgba(143, 168, 255, 0.9)';
+    const faint = 'rgba(143, 168, 255, 0.4)';
+    const pr = (gd) => ease((t - gd * 1000) / 2600);
+    const ring = (r, gd, col, cxo = 0, cyo = 0) => {
+      const p = pr(gd);
+      if (p <= 0) return;
+      g.beginPath();
+      g.arc(cxo, cyo, r, -Math.PI / 2, -Math.PI / 2 + p * Math.PI * 2);
+      g.strokeStyle = col;
+      g.stroke();
+    };
+    // 바깥 고리 — 12궁 마디와 눈금
+    ring(470, 0.1, main);
+    ring(452, 0.25, faint);
+    ring(372, 0.4, main);
+    g.beginPath();
+    for (let i = 0; i < 72; i++) {
+      const p1 = polar(452, i * 5);
+      const p2 = polar(i % 6 === 0 ? 432 : 442, i * 5);
+      g.moveTo(p1[0], p1[1]);
+      g.lineTo(p2[0], p2[1]);
+    }
+    g.strokeStyle = faint;
+    g.stroke();
+    g.font = `600 ${22}px ${MONO_F}`;
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    for (let j = 0; j < 12; j++) {
+      const n = polar(470, j * 30 + 15);
+      const tp = polar(408, j * 30 + 15);
+      g.beginPath();
+      g.arc(n[0], n[1], j % 3 === 0 ? 11 : 6, 0, Math.PI * 2);
+      g.fillStyle = OFF_FILL;
+      g.fill();
+      g.strokeStyle = j % 3 === 0 ? 'rgba(230, 180, 90, 0.9)' : main;
+      g.stroke();
+      g.fillStyle = 'rgba(217, 228, 240, 0.7)';
+      g.fillText(NUM[j], tp[0], tp[1]);
+    }
+    // 안쪽 — 육각성, 생명의 씨앗, 살
+    const triPts = (r, rot) => [0, 120, 240].map((d) => polar(r, d + rot));
+    for (const [rot, gd] of [[0, 0.6], [180, 0.75]]) {
+      const p = pr(gd);
+      if (p <= 0) continue;
+      g.beginPath();
+      partial(g, triPts(372, rot), p, true);
+      g.strokeStyle = main;
+      g.stroke();
+    }
+    ring(220, 0.9, main);
+    ring(110, 1, main);
+    for (let q = 0; q < 6; q++) {
+      const c = polar(110, q * 60);
+      ring(110, 1.05 + q * 0.08, faint, c[0], c[1]);
+    }
+    g.beginPath();
+    for (let m = 0; m < 12; m++) {
+      const q1 = polar(220, m * 30);
+      const q2 = polar(372, m * 30);
+      g.moveTo(q1[0], q1[1]);
+      g.lineTo(q2[0], q2[1]);
+    }
+    g.strokeStyle = faint;
+    g.stroke();
+    // 가운데만 보이게 — 바깥으로 갈수록 사라진다
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.globalCompositeOperation = 'destination-in';
+    const R0 = 0.269 * size * D;
+    const R1 = 0.495 * size * D;
+    const rg = g.createRadialGradient(D * cx, D * cy, R0, D * cx, D * cy, R1);
+    rg.addColorStop(0, 'rgba(0,0,0,1)');
+    rg.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = rg;
+    g.fillRect(0, 0, geoCv.c.width, geoCv.c.height);
+    g.globalCompositeOperation = 'source-over';
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = alpha * 0.6;
+    ctx.drawImage(geoCv.c, 0, 0);
+    ctx.restore();
+  }
+  function strand(t, amp, phase, lift, top, h) {
+    const pts = [];
+    const N = 90;
+    const mid = top + h / 2 + lift;
+    for (let i = 0; i <= N; i++) {
+      const uu = i / N;
+      const y = mid + amp * Math.sin(uu * Math.PI * 2 * 0.9 + t * 0.0009 + phase) + amp * 0.42 * Math.sin(uu * Math.PI * 2 * 2.1 - t * 0.0013 + phase * 1.7) + amp * 0.16 * Math.sin(uu * Math.PI * 2 * 4.3 + t * 0.002);
+      pts.push([uu * W, y]);
+    }
+    return pts;
+  }
+  function strokePts(pts) {
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+  }
+  function waveGrad(a) {
+    const g = ctx.createLinearGradient(0, 0, W, 0);
+    g.addColorStop(0, 'rgba(91, 120, 255, 0)');
+    g.addColorStop(0.18, `rgba(91, 120, 255, ${a})`);
+    g.addColorStop(0.5, `rgba(185, 193, 207, ${a})`);
+    g.addColorStop(0.82, `rgba(226, 180, 90, ${a})`);
+    g.addColorStop(1, 'rgba(226, 180, 90, 0)');
+    return g;
+  }
+  function drawLoader(now) {
+    const u = 1 / k;
+    const t = now - LD.t0;
+    const done = LD.doneAt ? now - LD.doneAt : -1;
+    const inA = clamp01(t / 450);
+    const outBg = done < 0 ? 1 : 1 - clamp01(done / 600);
+    const outCopy = done < 0 ? 1 : 1 - clamp01(done / 400);
+    const gone = done < 0 ? 0 : clamp01((done - 520) / 700);
+    const cx = W / 2;
+    const cy = H * 0.44;
+    const panel = Math.min(240, innerWidth * 0.58) * u;
+    LD.shown += (LD.target - LD.shown) * 0.12;
+    if (Math.abs(LD.target - LD.shown) < 0.2) LD.shown = LD.target;
+
+    // 바탕: 가운데 빛, 신성 기하학, 떠오르는 빛 알갱이, 아래로 가라앉는 바닥
+    const bgA = inA * outBg;
+    if (bgA > 0) {
+      const halo = ctx.createRadialGradient(cx, cy, 0, cx, cy, 0.42 * Math.max(W, H));
+      halo.addColorStop(0, `rgba(40, 70, 255, ${0.2 * bgA})`);
+      halo.addColorStop(1, 'rgba(40, 70, 255, 0)');
+      ctx.fillStyle = halo;
+      ctx.fillRect(0, 0, W, H);
+      drawGeo(t, cx, cy, bgA);
+      ctx.save();
+      ctx.shadowColor = 'rgba(226, 180, 90, 0.8)';
+      ctx.shadowBlur = 6;
+      for (const m of motes) {
+        const ph = (((now + m.dl) % m.t) + m.t) % m.t / m.t;
+        const a = ph < 0.15 ? (ph / 0.15) * 0.9 : ph < 0.7 ? 0.9 - ((ph - 0.15) / 0.55) * 0.4 : 0.5 * (1 - (ph - 0.7) / 0.3);
+        ctx.globalAlpha = a * bgA;
+        ctx.fillStyle = '#f0d69a';
+        ctx.beginPath();
+        ctx.arc(m.x * W, m.y * H - ph * 0.26 * H, (m.s * u) / 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+      const fl = ctx.createLinearGradient(0, H * 0.48, 0, H);
+      fl.addColorStop(0, 'rgba(4, 6, 10, 0)');
+      fl.addColorStop(0.62, 'rgba(4, 6, 10, 1)');
+      ctx.fillStyle = fl;
+      ctx.fillRect(0, H * 0.48, W, H * 0.52);
+    }
+
+    // 빛의 띠 — 화면을 가로지르는 두 가닥
+    const waveA = clamp01((t - 350) / 1000) * outCopy;
+    if (waveA > 0) {
+      const wh = 0.4 * H;
+      const amp = Math.min(wh * 0.1, 26 * u);
+      const mainS = strand(now, amp, 0, 6 * u, cy - wh / 2, wh);
+      ctx.save();
+      ctx.globalAlpha = waveA;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      strokePts(strand(now * 0.8, amp * 0.8, 2.2, -10 * u, cy - wh / 2, wh));
+      ctx.strokeStyle = waveGrad(0.45);
+      ctx.lineWidth = 1.2 * u;
+      ctx.stroke();
+      strokePts(mainS);
+      ctx.strokeStyle = waveGrad(0.12);
+      ctx.lineWidth = 18 * u;
+      ctx.stroke();
+      strokePts(mainS);
+      ctx.strokeStyle = waveGrad(0.95);
+      ctx.lineWidth = 2.4 * u;
+      ctx.shadowColor = 'rgba(91, 120, 255, 0.8)';
+      ctx.shadowBlur = 10;
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // 파인 원판과 네 모서리 눈금
+    const pA = ease((t - 200) / 900) * outCopy;
+    if (pA > 0) {
+      const sc = 0.94 + 0.06 * pA;
+      const r = (panel / 2) * sc;
+      ctx.save();
+      ctx.globalAlpha = pA;
+      const pg = ctx.createRadialGradient(cx, cy - r * 0.2, r * 0.2, cx, cy, r);
+      pg.addColorStop(0, '#0b111c');
+      pg.addColorStop(1, '#03050a');
+      ctx.fillStyle = pg;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(143, 168, 255, 0.18)';
+      ctx.lineWidth = u;
+      ctx.stroke();
+      ctx.fillStyle = '#e2b45a';
+      ctx.shadowColor = 'rgba(226, 180, 90, 0.8)';
+      ctx.shadowBlur = 6;
+      const e = panel / 2 + 16 * u;
+      for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+        const bx = cx + sx * e - (sx < 0 ? 0 : 8 * u);
+        const by = cy + sy * e - (sy < 0 ? 0 : 10 * u);
+        ctx.fillRect(bx, by, 2 * u, 10 * u);
+        ctx.fillRect(bx + 5 * u, by, 2 * u, 10 * u);
+      }
+      ctx.restore();
+    }
+
+    // 로고 — 원 궤도 안의 삼각형. 조각마다 글리치하며 그려진다
+    const lt = t - 260;
+    const logoA = 1 - gone;
+    if (lt > 0 && logoA > 0) {
+      const size = panel * 0.66;
+      const s = size / 120;
+      ctx.save();
+      ctx.globalAlpha = logoA;
+      ctx.translate(cx - size / 2, cy - size / 2 - gone * 8 * u);
+      ctx.translate(size / 2, size / 2);
+      ctx.scale(s * (1 - 0.06 * gone), s * (1 - 0.06 * gone));
+      ctx.translate(-60, -60);
+      ctx.lineCap = 'butt';
+      ctx.lineJoin = 'round';
+      ctx.shadowColor = 'rgba(91, 120, 255, 0.9)';
+      ctx.shadowBlur = 8;
+      const op = ease((lt - 50) / 1200);
+      if (op > 0) {
+        ctx.beginPath();
+        ctx.arc(60, 60, 40, -Math.PI / 2, -Math.PI / 2 + op * Math.PI * 2);
+        ctx.strokeStyle = '#e2b45a';
+        ctx.lineWidth = 2.8;
+        ctx.shadowColor = 'rgba(226, 180, 90, 0.7)';
+        ctx.stroke();
+      }
+      const segs = [[[25.36, 80], [60, 20], 450], [[60, 20], [94.64, 80], 800], [[94.64, 80], [25.36, 80], 1150]];
+      ctx.shadowColor = 'rgba(91, 120, 255, 0.9)';
+      for (const [a, b, d] of segs) {
+        const st = lt - d;
+        if (st <= 0) continue;
+        const p = ease(st / 420);
+        // 글리치: 0.55초 동안 계단식으로 흔들리며 깜빡인다
+        const gp = st / 550;
+        const jx = gp < 0.12 ? -5 : gp < 0.24 ? 4 : gp < 0.36 ? -2 : 0;
+        const ga = gp < 0.12 ? 0.2 : gp < 0.24 ? 1 : gp < 0.36 ? 0.35 : gp < 0.58 ? 1 : gp < 0.66 ? 0.55 : 1;
+        ctx.globalAlpha = logoA * ga;
+        ctx.beginPath();
+        ctx.moveTo(a[0] + jx, a[1]);
+        ctx.lineTo(a[0] + jx + (b[0] - a[0]) * p, a[1] + (b[1] - a[1]) * p);
+        ctx.strokeStyle = '#8fa8ff';
+        ctx.lineWidth = 7.5;
+        ctx.stroke();
+      }
+      ctx.globalAlpha = logoA * clamp01((lt - 1500) / 600);
+      ctx.beginPath();
+      ctx.arc(60, 60, 3.6, 0, Math.PI * 2);
+      ctx.fillStyle = '#e2b45a';
+      ctx.shadowColor = 'rgba(226, 180, 90, 0.9)';
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // 문구 — 캡션, 상태와 점, 지금 하는 일, 진행 막대
+    const cA = ease((t - 450) / 600) * outCopy;
+    if (cA > 0) {
+      const top = cy + panel / 2 + (38 + 6 * (1 - cA)) * u;
+      ctx.save();
+      ctx.globalAlpha = cA;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const set = (w, sz, f) => {
+        ctx.font = `${w} ${sz * u}px ${f}`;
+      };
+      set(400, 11, MONO_F);
+      try {
+        ctx.letterSpacing = `${4.6 * u}px`;
+      } catch {
+        /* 오래된 엔진 */
+      }
+      ctx.fillStyle = 'rgba(170, 186, 204, 0.7)';
+      ctx.fillText(LD.cap, cx, top);
+      try {
+        ctx.letterSpacing = '0px';
+      } catch {
+        /* 오래된 엔진 */
+      }
+      set(600, 17, UI_FONT);
+      ctx.fillStyle = '#e8eef8';
+      ctx.shadowColor = 'rgba(120, 180, 255, 0.6)';
+      ctx.shadowBlur = 8;
+      const dots = '.'.repeat((Math.floor(now / 420) % 3) + 1);
+      const sw = ctx.measureText(LD.status).width;
+      ctx.fillText(LD.status, cx, top + 30 * u);
+      ctx.textAlign = 'left';
+      ctx.fillText(dots, cx + sw / 2 + 2 * u, top + 30 * u);
+      ctx.shadowBlur = 0;
+      // 지금 하는 일 — 바뀔 때 아래에서 살짝 올라온다
+      const sa = ease((now - LD.taskAt) / 320);
+      set(400, 12, UI_FONT);
+      ctx.textAlign = 'center';
+      const tw = ctx.measureText(LD.task).width;
+      const ty = top + (58 + 4 * (1 - sa)) * u;
+      ctx.globalAlpha = cA * sa;
+      ctx.fillStyle = 'rgba(170, 186, 204, 0.85)';
+      ctx.fillText(LD.task, cx + 11 * u, ty);
+      ctx.save();
+      ctx.translate(cx - tw / 2 - 9 * u, ty);
+      ctx.rotate(Math.PI / 4);
+      ctx.strokeStyle = '#e2b45a';
+      ctx.lineWidth = 1.2 * u;
+      ctx.strokeRect(-4.5 * u, -4.5 * u, 9 * u, 9 * u);
+      ctx.restore();
+      ctx.globalAlpha = cA;
+      // 진행 막대 — 3px
+      const rw = Math.min(192, innerWidth * 0.52) * u;
+      const ry = top + 84 * u;
+      const rx = cx - rw / 2 - 18 * u;
+      ctx.fillStyle = 'rgba(120, 150, 180, 0.22)';
+      ctx.fillRect(rx, ry - 1.5 * u, rw, 3 * u);
+      const fg = ctx.createLinearGradient(rx, 0, rx + rw, 0);
+      fg.addColorStop(0, '#2a4dff');
+      fg.addColorStop(1, '#8fa8ff');
+      ctx.fillStyle = fg;
+      ctx.fillRect(rx, ry - 1.5 * u, (rw * LD.shown) / 100, 3 * u);
+      set(600, 13, MONO_F);
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#8fa8ff';
+      ctx.fillText(String(Math.round(LD.shown)).padStart(3, ' '), rx + rw + 12 * u, ry);
+      ctx.restore();
+    }
+  }
+  // 꺼진 화면 — 패널 사이 이음매, 그 위에 로딩 화면, 옅은 주사선
+  function drawOff(now) {
+    ctx.setTransform(D, 0, 0, D, 0, 0);
+    ctx.fillStyle = OFF_FILL;
+    ctx.fillRect(0, 0, W, H);
+    if (LD.on) drawLoader(now);
+    ctx.setTransform(D, 0, 0, D, 0, 0);
+    gridLines(ctx, DARK_LINE);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.22)';
+    for (let y = 0; y < canvas.height; y += 3 * dpr) ctx.fillRect(0, y, canvas.width, dpr);
+  }
+
   /* ════════════ 매 프레임 — 바뀐 게 있을 때만 다시 그린다 ════════════ */
   let dirty = true;
   let lastX = 99;
@@ -801,8 +1675,10 @@
     readPalette();
     P.bloom = parseFloat(getComputedStyle(root).getPropertyValue('--scene-bloom')) || 0.5;
     layout();
+    groupCache = {};
     buildCache();
     sizeFx();
+    buildScreens();
     publishGeometry();
     dirty = true;
   }
@@ -824,8 +1700,17 @@
       root.style.setProperty('--px', cur.x.toFixed(4));
       root.style.setProperty('--py', cur.y.toFixed(4));
     }
-    if (!dirty) return;
+    const now = performance.now();
+    const animating = power.phase !== 'on';
+    if (!dirty && !animating) return;
     dirty = false;
+    if (power.phase === 'down' && now - power.t0 > power.spec.last + power.spec.dur + 60) power.phase = 'off';
+    if ((power.phase === 'boot' || power.phase === 'up') && now - power.t0 > power.spec.end + 50) power.phase = 'on';
+    if (power.phase === 'off') {
+      drawOff(now);
+      edgeFX();
+      return;
+    }
     const sunk = [];
     const raised = [];
     for (const t of Object.values(tiles)) {
@@ -841,6 +1726,8 @@
     ctx.drawImage(cache.ground, 0, 0, W, H);
     drawRaisedPass(raised, walls);
     bloom();
+    ctx.setTransform(D, 0, 0, D, 0, 0);
+    if (power.phase !== 'on') drawCover(now);
     edgeFX();
   }
 
@@ -879,8 +1766,9 @@
     requestAnimationFrame(frame);
   }
 
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   window.Scene = {
-    /** 띠 바닥면 문구: { ok, tag, line, link, code, right } */
+    /** 띠 바닥면 문구: { code, right } */
     setBand(info) {
       const key = JSON.stringify(info);
       if (key === band.key) return;
@@ -888,6 +1776,51 @@
       band.info = info;
       band.dirty = true;
       dirty = true;
+    },
+    /** 처음 켤 때: 검은 화면에서 패널이 켜진다. faulty = 오류 있음. UI를 띄울 때가 되면 끝난다 */
+    boot(faulty) {
+      const sp = bootSpec(faulty);
+      buildLogFx(sp);
+      runLog(sp);
+      setPower('boot', sp);
+      return wait(sp.uiAt);
+    },
+    /** 패널이 묶음 단위로 꺼진다 — 가장자리부터 안쪽으로 */
+    powerDown() {
+      setPower('down', { dir: 'off', faults: false, start: 0, last: 520, dur: 420 });
+      return wait(1000);
+    },
+    /** 꺼진 화면에서 다시 켜진다 — 오류 없이. UI를 띄울 때가 되면 끝난다 */
+    powerUp() {
+      const sp = { dir: 'on', faults: false, start: 80, last: 900, dur: 600 };
+      sp.end = sp.last + sp.dur;
+      setPower('up', sp);
+      return wait(sp.end - 250);
+    },
+    /** 꺼진 패널 화면에 로딩 화면을 띄운다 */
+    loader(opts) {
+      Object.assign(LD, { on: true, t0: performance.now(), cap: opts.cap || 'MCES · SCRF/SECTOR A', status: opts.status || '불러오는 중', task: opts.task || '', taskAt: performance.now(), target: 0, shown: 0, doneAt: 0 });
+      dirty = true;
+      return {
+        progress(frac, task) {
+          if (typeof frac === 'number') LD.target = Math.max(LD.target, Math.max(0, Math.min(1, frac)) * 100);
+          if (task && task !== LD.task) {
+            LD.task = task;
+            LD.taskAt = performance.now();
+          }
+        },
+        status(text) {
+          LD.status = text;
+        },
+        /** 로고만 남기고 빠진 뒤 로고도 사라진다 */
+        async finish() {
+          LD.target = 100;
+          await wait(380);
+          LD.doneAt = performance.now();
+          await wait(1250);
+          LD.on = false;
+        },
+      };
     },
   };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount);
