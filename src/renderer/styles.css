@@ -702,3 +702,32 @@ input[type="number"].field { font-family: var(--mono); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* ═══════════ 홈 목록: 오른쪽의 얇은 ✕ — 서버 삭제 ═══════════ */
+.nav-row { position: relative; }
+.nav-row .nav-item { width: 100%; padding-right: 34px; }
+.nav-del {
+  position: absolute; right: 2px; top: 50%; translate: 0 -50%;
+  width: 24px; height: 24px; display: grid; place-items: center;
+  background: none; cursor: pointer; font-size: 0.72rem; line-height: 1; color: var(--faint);
+  opacity: 0.45; transition: opacity 0.2s, color 0.2s;
+}
+.nav-row:hover .nav-del { opacity: 1; }
+.nav-del:hover:not(:disabled) { color: var(--bad-text); }
+.nav-del:disabled { cursor: default; opacity: 0.15; }
+.nav-row:has(.nav-tps) .nav-item { padding-right: 34px; }
+
+/* ═══════════ 새로 만들기 ↔ 가져오기: 오른쪽 판만 흐려졌다가 새로 나온다 ═══════════ */
+.main { transition: opacity 0.22s var(--ease), filter 0.22s var(--ease); }
+.main.is-swap { opacity: 0; filter: blur(6px); }
+
+/* ═══════════ 플러그인·모드 탭: 설치됨 / 찾기 ═══════════ */
+.addon-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.addon-filter { display: flex; align-items: center; gap: 10px; margin: 12px 0 4px; flex-wrap: wrap; }
+.addon-filter .field { flex: 1; min-width: 180px; }
+.addon-filter .seg-item { min-height: 26px; padding: 2px 10px; font-size: 0.78rem; }
+
+/* ═══════════ 종료: UI가 아래로 내려가며 사라진다 ═══════════ */
+:root[data-ui="exit"] .pane { animation: exitDown 0.7s var(--ease) both; }
+:root[data-ui="exit"] .pane-r { animation-delay: 0.06s; }
+@keyframes exitDown { to { opacity: 0; translate: 0 70px; filter: blur(8px); } }

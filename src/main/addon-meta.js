@@ -11,8 +11,36 @@ const { compareVersions } = require('./versions');
 
 const WANTED = [
   'plugin.yml', 'paper-plugin.yml', 'fabric.mod.json', 'quilt.mod.json', 'pack.mcmeta',
-  'META-INF/mods.toml', 'META-INF/neoforge.mods.toml', 'META-INF/MANIFEST.MF', 'mcmod.info',
+  'META-INF/mods.toml', 'META-INF/neoforge.mods.toml', 'META-INF/MANIFEST.MF', 'mcmod.info', 'META-INF/jarjar/metadata.json',
 ];
+
+/** TOML 로 읽지 못하는 mods.toml(문법이 느슨한 파일)에서 필요한 값만 줄 단위로 뽑는다 */
+function looseModsToml(text) {
+  const mods = [];
+  const deps = {};
+  let cur = null;
+  let section = null;
+  for (const raw of String(text).split(/\r?\n/)) {
+    const line = raw.replace(/#.*$/, '').trim();
+    if (!line) continue;
+    const head = /^\[\[\s*([\w.]+)\s*\]\]$/.exec(line);
+    if (head) {
+      section = head[1];
+      cur = {};
+      if (section === 'mods') mods.push(cur);
+      else if (section.startsWith('dependencies.')) (deps[section.slice(13)] = deps[section.slice(13)] || []).push(cur);
+      continue;
+    }
+    if (/^\[/.test(line)) {
+      section = null;
+      cur = null;
+      continue;
+    }
+    const kv = /^([\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|(true|false))/.exec(line);
+    if (kv && cur) cur[kv[1]] = kv[2] !== undefined ? kv[2] : kv[3] !== undefined ? kv[3] : kv[4] === 'true';
+  }
+  return { mods, dependencies: deps };
+}
 
 /** Forge mods.toml → 모드 정보. version 이 ${file.jarVersion} 이면 MANIFEST 의 Implementation-Version */
 function parseModsToml(text, manifest) {
@@ -20,7 +48,8 @@ function parseModsToml(text, manifest) {
   try {
     t = TOML.parse(text);
   } catch {
-    return null;
+    t = looseModsToml(text);
+    if (!t.mods.length) return null;
   }
   const mod = (t.mods || [])[0] || {};
   const id = mod.modId || null;
@@ -29,17 +58,22 @@ function parseModsToml(text, manifest) {
     const m = /^Implementation-Version:\s*(.+)$/m.exec(manifest || '');
     version = m ? m[1].trim() : null;
   }
-  const deps = (t.dependencies && id && t.dependencies[id]) || [];
+  // 한 jar 에 모드가 여럿이면 모두의 의존성을 본다
+  const ids = (t.mods || []).map((m) => m.modId).filter(Boolean);
+  const deps = ids.flatMap((m) => (t.dependencies && t.dependencies[m]) || []);
   const required = (d) => d.mandatory === true || d.type === 'required' || (d.mandatory === undefined && d.type === undefined);
+  // 접속하는 쪽에서만 필요한 의존성(side = "CLIENT")은 서버에서 따지지 않는다
+  const serverSide = (d) => String(d.side || 'BOTH').toUpperCase() !== 'CLIENT';
   const mc = deps.find((d) => d.modId === 'minecraft');
   return {
-    kind: 'forge',
+    // NeoForge 1.20.2~1.20.4 모드는 mods.toml 을 쓰지만 neoforge 에 의존한다
+    kind: deps.some((d) => d.modId === 'neoforge') ? 'neoforge' : 'forge',
     id,
     name: mod.displayName || id,
     version,
     mcRange: mc ? String(mc.versionRange || '') : null,
-    depends: deps.filter((d) => required(d) && !['minecraft', 'forge', 'neoforge', 'java'].includes(d.modId)).map((d) => d.modId),
-    provides: [],
+    depends: [...new Set(deps.filter((d) => required(d) && serverSide(d) && !['minecraft', 'forge', 'neoforge', 'java', ...ids].includes(d.modId)).map((d) => d.modId))],
+    provides: ids.slice(1),
   };
 }
 
@@ -197,6 +231,17 @@ function collectVariants(entries) {
     const m = parseModsToml(entries['META-INF/neoforge.mods.toml'], entries['META-INF/MANIFEST.MF']);
     if (m) out.push({ ...m, kind: 'neoforge' });
   }
+  if (entries['META-INF/jarjar/metadata.json']) {
+    let jj = {};
+    try {
+      jj = JSON.parse(entries['META-INF/jarjar/metadata.json']);
+    } catch { /* 무시 */ }
+    const bundled = (jj.jars || []).flatMap((j) => {
+      const a = (j.identifier && j.identifier.artifact) || '';
+      return a ? [a, a.replace(/[-_](neo)?forge$|[-_]common$|[-_]neoforge$/i, '')] : [];
+    });
+    for (const v of out) if (v.kind === 'forge' || v.kind === 'neoforge') v.provides = [...(v.provides || []), ...bundled];
+  }
   return out;
 }
 
@@ -213,14 +258,14 @@ async function inspect(file) {
     const primary = variants[0];
     return variants.length > 1 ? { ...primary, variants: Object.fromEntries(variants.map((v) => [v.kind, v])) } : primary;
   }
-  if (entries['pack.mcmeta']) {
+  if (entries['pack.mcmeta'] && !/\.jar(\.disabled)?$/i.test(file)) {
     let pack = {};
     try {
       pack = JSON.parse(entries['pack.mcmeta']).pack || {};
     } catch { /* 무시 */ }
     return { kind: 'datapack', name: null, packFormat: pack.pack_format || null, depends: [] };
   }
-  return { kind: null, error: '플러그인·모드 정보 파일 없음' };
+  return { kind: null, error: /\.jar(\.disabled)?$/i.test(file) ? '모드 정보 없는 jar — 다른 모드가 쓰는 라이브러리일 수 있음' : '플러그인·모드 정보 파일 없음' };
 }
 
 // ---------- Fabric 버전 범위 ("~1.21", ">=1.21.1 <1.21.4", "1.21.x", ["1.21", "1.21.1"]) ----------

@@ -325,6 +325,10 @@ function registerIpc() {
 
   // 앱
   handle('app:settings', () => Settings.get());
+  // 메인에서 ESC → 종료 연출이 끝난 뒤 창을 닫는다 (켜진 서버가 있으면 저장하고 끈 다음 닫힌다)
+  handle('app:quit', () => {
+    if (win) win.close();
+  });
   // 앱 버전과 이 기기만의 단말 번호(기기 이름·사용자·네트워크 주소로 만든 4자리 16진수 — 같은 PC에서는 늘 같다)
   handle('app:info', () => {
     const os = require('os');

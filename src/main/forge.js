@@ -13,12 +13,24 @@ const { spawn } = require('child_process');
  * 설치 프로그램을 서버 폴더에서 실행한다.
  * @param {(line:string)=>void} onLine 설치 로그 한 줄마다
  */
-function runInstaller(serverDir, javaBin, installerFile, onLine = () => {}) {
+function runInstaller(serverDir, javaBin, installerFile, onLine = () => {}, quietMs = 5 * 60 * 1000) {
   return new Promise((resolve, reject) => {
-    const proc = spawn(javaBin, ['-jar', installerFile, '--installServer'], { cwd: serverDir, windowsHide: true });
+    const proc = spawn(javaBin, ['-jar', installerFile, '--installServer'], { cwd: serverDir, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
     const tail = [];
     let buf = '';
+    // 설치 프로그램이 한동안 아무것도 출력하지 않으면(멈춤) 끝낸다
+    let quiet = null;
+    let timedOut = false;
+    const arm = () => {
+      clearTimeout(quiet);
+      quiet = setTimeout(() => {
+        timedOut = true;
+        proc.kill();
+      }, quietMs);
+    };
+    arm();
     const onData = (chunk) => {
+      arm();
       buf += chunk.toString('utf8');
       const lines = buf.split(/\r?\n/);
       buf = lines.pop();
@@ -31,9 +43,14 @@ function runInstaller(serverDir, javaBin, installerFile, onLine = () => {}) {
     };
     proc.stdout.on('data', onData);
     proc.stderr.on('data', onData);
-    proc.on('error', (e) => reject(new Error(`설치 프로그램 실행 실패: ${e.message}`)));
+    proc.on('error', (e) => {
+      clearTimeout(quiet);
+      reject(new Error(`설치 프로그램 실행 실패: ${e.message}`));
+    });
     proc.on('exit', (code) => {
-      if (code === 0) resolve();
+      clearTimeout(quiet);
+      if (timedOut) reject(new Error(`모드 로더 설치가 ${Math.round(quietMs / 60000)}분 동안 멈춤 — 라이브러리 서버 연결 확인 (${tail.slice(-1).join('')})`));
+      else if (code === 0) resolve();
       else reject(new Error(`모드 로더 설치 실패 (코드 ${code}) — ${tail.slice(-3).join(' / ')}`));
     });
   });

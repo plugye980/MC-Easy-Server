@@ -73,7 +73,7 @@ async function fetchServerFiles(dir, jar, javaBin, onProgress, jarName = 'server
   await download(jar.url, path.join(dir, target), {
     sha256: jar.sha256,
     sha1: jar.sha1,
-    onProgress: ({ received, total }) => onProgress({ text: jar.installer ? `${loaderName} 설치 프로그램 내려받는 중` : '서버 파일 내려받는 중', percent: total ? received / total : 0 }),
+    onProgress: ({ received, total }) => onProgress({ text: `${jar.installer ? `${loaderName} 설치 프로그램 내려받는 중` : '서버 파일 내려받는 중'} (${(received / 1048576).toFixed(1)}${total ? ` / ${(total / 1048576).toFixed(1)}` : ''}MB)`, percent: total ? received / total : 0 }),
   });
   if (!jar.installer) return;
   onProgress({ text: `${loaderName} 설치 중 (라이브러리 내려받기, 1~3분)`, percent: 0.5 });
@@ -89,6 +89,23 @@ const CONSOLE_LOG = 'mces-console.log';
 const CONSOLE_LOG_PREV = 'mces-console.prev.log';
 
 const DEFAULT_BACKUP = { enabled: true, intervalMin: 30, keep: 10, onStop: true };
+
+// 파일 정보는 파일이 바뀌지 않는 한 다시 읽지 않는다 (모드가 수백 개면 목록을 열 때마다 읽으면 느리다)
+const metaCache = new Map();
+async function inspectCached(file) {
+  let st;
+  try {
+    st = fs.statSync(file);
+  } catch {
+    return addonMeta.inspect(file);
+  }
+  const key = `${file}|${st.size}|${st.mtimeMs}`;
+  if (!metaCache.has(key)) {
+    if (metaCache.size > 5000) metaCache.clear();
+    metaCache.set(key, await addonMeta.inspect(file));
+  }
+  return metaCache.get(key);
+}
 
 class Instance {
   constructor(id) {
@@ -1166,7 +1183,7 @@ class ServerManager extends EventEmitter {
         // Modrinth 로 받은 파일도 안의 이름을 읽어야 의존성 이름(예: EssentialsX → "Essentials")과 맞춰 볼 수 있다
         if (!a.meta) {
           const file = locate(a.fileName);
-          a.meta = file ? addonMeta.forServer(await addonMeta.inspect(file), view.type) : { kind: null, error: '파일 없음' };
+          a.meta = file ? addonMeta.forServer(await inspectCached(file), view.type) : { kind: null, error: '파일 없음' };
           if (!a.projectId && a.meta.name) a.title = a.meta.name;
           if (a.meta.version && !a.versionNumber) a.versionNumber = a.meta.version;
         }
@@ -1185,6 +1202,18 @@ class ServerManager extends EventEmitter {
    * @returns {Promise<{added: object[], rejected: {file: string, reason: string}[]}>}
    */
   async importFiles(id, files, onProgress = () => {}) {
+    // 같은 서버에 파일을 넣는 중이면(모드팩은 오래 걸린다) 끝날 때까지 받지 않는다 — 같은 폴더에 두 번 쓰면 깨진다
+    this.importing = this.importing || new Set();
+    if (this.importing.has(id)) throw new Error('이미 파일(모드팩)을 넣는 중 — 끝난 뒤 다시 시도');
+    this.importing.add(id);
+    try {
+      return await this.importFilesNow(id, files, onProgress);
+    } finally {
+      this.importing.delete(id);
+    }
+  }
+
+  async importFilesNow(id, files, onProgress) {
     const base0 = Servers.get(id);
     const dir = this.dir(id);
     const ext = base0.type === 'vanilla' ? /\.zip$/i : /\.jar$/i;
