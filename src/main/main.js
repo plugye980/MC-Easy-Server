@@ -1,6 +1,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { app, BrowserWindow, ipcMain, shell, dialog, clipboard, nativeTheme } = require('electron');
 
 const paths = require('./paths');
@@ -143,12 +144,12 @@ function registerIpc() {
       const r = await dialog.showOpenDialog(win, {
         title: datapack ? '데이터팩 파일 선택' : server.type === 'paper' ? '플러그인 파일 선택' : server.type === 'hybrid' ? '플러그인·모드 파일 선택' : '모드 파일 선택',
         properties: ['openFile', 'multiSelections'],
-        filters: [datapack ? { name: '데이터팩', extensions: ['zip'] } : { name: server.type === 'paper' ? '플러그인' : server.type === 'hybrid' ? '플러그인·Forge 모드' : server.type === 'forge' ? 'Forge 모드' : server.type === 'neoforge' ? 'NeoForge 모드' : 'Fabric 모드', extensions: ['jar'] }],
+        filters: [datapack ? { name: '데이터팩', extensions: ['zip'] } : { name: server.type === 'paper' ? '플러그인' : server.type === 'hybrid' ? '플러그인·Forge 모드 · 모드팩' : server.type === 'forge' ? 'Forge 모드 · 모드팩' : server.type === 'neoforge' ? 'NeoForge 모드 · 모드팩' : 'Fabric 모드 · 모드팩', extensions: server.type === 'paper' ? ['jar'] : ['jar', 'zip', 'mrpack'] }],
       });
       if (r.canceled) return null;
       files = r.filePaths;
     }
-    return manager.importFiles(id, files);
+    return manager.importFiles(id, files, progressTo(`addon-${id}`));
   });
   handle('addons:installByName', (id, name, kind) => manager.installByName(id, name, progressTo(`addon-${id}`), kind));
   handle('addons:install', (id, projectId, kind) => manager.installAddon(id, projectId, progressTo(`addon-${id}`), kind));
@@ -324,6 +325,14 @@ function registerIpc() {
 
   // 앱
   handle('app:settings', () => Settings.get());
+  // 앱 버전과 이 기기만의 단말 번호(기기 이름·사용자·네트워크 주소로 만든 4자리 16진수 — 같은 PC에서는 늘 같다)
+  handle('app:info', () => {
+    const os = require('os');
+    const macs = Object.values(os.networkInterfaces()).flat().filter((n) => n && !n.internal && n.mac && n.mac !== '00:00:00:00:00:00').map((n) => n.mac).sort();
+    const seed = [os.hostname(), os.userInfo().username, macs[0] || '', os.platform()].join('|');
+    const code = crypto.createHash('sha1').update(seed).digest('hex').slice(0, 4).toUpperCase();
+    return { version: app.getVersion(), device: `0x${code}` };
+  });
   handle('app:setSettings', (patch) => {
     const s = Settings.set(patch);
     if (patch.theme) nativeTheme.themeSource = patch.theme;

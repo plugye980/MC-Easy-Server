@@ -14,15 +14,17 @@
 
   <!-- 공간 속에 비스듬히 선 판: 왼쪽은 서버 목록과 고른 서버, 오른쪽은 탭과 내용 -->
   <div class="ui">
-    <header class="brand" id="brand"></header>
-
     <section class="pane pane-l" aria-label="서버">
       <span class="pin pin-tl"></span><span class="pin pin-br"></span>
-      <div class="pane-scroll">
-        <nav class="nav" id="side" aria-label="내 서버"></nav>
-        <div class="detail" id="detail"></div>
+      <div class="col-a">
+        <div class="pane-scroll">
+          <nav class="nav" id="side" aria-label="내 서버"></nav>
+          <div class="detail" id="detail"></div>
+        </div>
+        <div class="pane-foot" id="paneFoot"></div>
       </div>
-      <div class="pane-foot" id="paneFoot"></div>
+      <!-- 서버 페이지: 탭과 내용이 여기로 옮겨 와 한 창이 된다 -->
+      <div class="col-b" id="colB"></div>
     </section>
 
     <section class="pane pane-r" aria-label="내용">

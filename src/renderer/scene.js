@@ -144,13 +144,69 @@
     tiles = layoutMap(curLayout);
   }
 
-  /* 서버 페이지 배치 — 위쪽 띠와 왼쪽 계단(로고 자리)은 그대로 두고,
-     양쪽에서 아래 가운데로 모이는 꺼진 사선 띠와, 아래 가운데에 켜진 큰 삼각형.
-     사선 띠는 화면 가운데 기준: 왼쪽은 c − r', 오른쪽은 c + r' 값의 범위(r'은 맨 아랫줄에서 센 줄) */
-  const BANDS_L = [[-15, -12], [-8, -6]];
-  const BANDS_R = [[6, 8], [12, 15]];
-  const inBands = (v, list) => list.some(([a, b]) => v >= a && v <= b);
+  /* 서버 페이지 배치 — 위쪽 띠와 왼쪽 계단(로고 자리)은 그대로 두고, 나머지는 서버마다 다르게(서버 id로 정한 난수).
+     켜짐·꺼짐 칸은 육각형(꼭짓점 하나를 둘러싼 6칸) 단위로만 놓는다. 육각형끼리 변으로 붙인 덩어리는 바깥 모서리가
+     120°·240°뿐이라 외톨이 삼각형이나 톱니 같은 뾰족한 모양이 생기지 않는다.
+     육각형 중심은 ((h + 3r) / 2) mod 3 = 0 인 꼭짓점 (h: 반 칸 단위 가로 자리) — 모든 칸이 정확히 한 육각형에 속한다. */
+  const HEX_NB = [[3, 1], [-3, -1], [0, 2], [0, -2], [-3, 1], [3, -1]];
+  function seeded(str) {
+    let h = 2166136261;
+    for (const ch of String(str)) h = Math.imul(h ^ ch.charCodeAt(0), 16777619);
+    return () => {
+      h = Math.imul(h ^ (h >>> 15), 2246822507);
+      h = Math.imul(h ^ (h >>> 13), 3266489909);
+      return ((h ^= h >>> 16) >>> 0) / 4294967296;
+    };
+  }
+  const hexCells = (hc, rc) => [rc - 1, rc].flatMap((r) => [hc - 1, hc, hc + 1].map((c) => [r, c]));
+  function randomHexes(out, seed) {
+    const rnd = seeded(seed || 'server');
+    const keyOf = (r, c) => {
+      const f = fromC(r, c);
+      return `${r},${f.k},${f.t}`;
+    };
+    const hMin = cols.left - 2;
+    const hMax = cols.right + 2;
+    const rMin = rows.top + 3;
+    const rMax = rows.bottom + 1;
+    const centers = [];
+    for (let rc = rMin; rc <= rMax; rc++) {
+      for (let hc = hMin; hc <= hMax; hc++) if (mod2(hc - rc) === 0 && ((((hc + 3 * rc) / 2) % 3) + 3) % 3 === 0) centers.push([hc, rc]);
+    }
+    const used = new Set();
+    const id = (h, r) => `${h},${r}`;
+    // 이미 다른 칸(띠·계단)이 있거나 위쪽 띠에 닿는 육각형은 쓰지 않는다
+    const free = (h, r) => r >= rMin && r <= rMax && h >= hMin && h <= hMax && !used.has(id(h, r)) && hexCells(h, r).every(([rr, cc]) => !out[keyOf(rr, cc)]);
+    const near = (h, r) => HEX_NB.some(([dh, dr]) => used.has(id(h + dh, r + dr)));
+    const blobs = 5 + Math.floor(rnd() * 3);
+    for (let n = 0, tries = 0; n < blobs && tries < 200; tries++) {
+      const [h0, r0] = centers[Math.floor(rnd() * centers.length)] || [];
+      if (h0 === undefined || !free(h0, r0) || near(h0, r0)) continue;
+      const st = rnd() < 0.55 ? 1 : -1;
+      const blob = [[h0, r0]];
+      used.add(id(h0, r0));
+      const size = 1 + Math.floor(rnd() * 4);
+      for (let g = 0; g < size * 4 && blob.length < size; g++) {
+        const [bh, br] = blob[Math.floor(rnd() * blob.length)];
+        const [dh, dr] = HEX_NB[Math.floor(rnd() * 6)];
+        const nh = bh + dh;
+        const nr = br + dr;
+        // 다른 덩어리와는 붙지 않게
+        if (!free(nh, nr) || HEX_NB.some(([ah, ar]) => used.has(id(nh + ah, nr + ar)) && !blob.some(([x, y]) => x === nh + ah && y === nr + ar))) continue;
+        blob.push([nh, nr]);
+        used.add(id(nh, nr));
+      }
+      for (const [hh, rr] of blob) {
+        for (const [r, c] of hexCells(hh, rr)) {
+          const f = fromC(r, c);
+          out[`${r},${f.k},${f.t}`] = { r, k: f.k, t: f.t, z: st > 0 ? ON : OFF };
+        }
+      }
+      n++;
+    }
+  }
   let curLayout = 'home';
+  let curSeed = '';
   function layoutMap(name) {
     const out = {};
     const put = (r, c, st) => {
@@ -168,22 +224,7 @@
         for (let c = cA + c0; c <= to; c++) put(r, c, st);
       }
     }
-    if (name === 'server') {
-      const rb = rows.bottom;
-      for (let r = rows.top + 2; r <= rb + 1; r++) {
-        const rr = r - rb;
-        for (let c = cols.left - 3; c <= cols.right + 3; c++) {
-          const f = fromC(r, c);
-          if (out[`${r},${f.k},${f.t}`]) continue;
-          if (c < 0 ? inBands(c - rr, BANDS_L) : inBands(c + rr, BANDS_R)) put(r, c, -1);
-        }
-      }
-      // 아래 가운데의 켜진 큰 삼각형 (작은 칸 9개, 꼭짓점이 위)
-      const sft = mod2(rb - 2);
-      [[rb - 2, 0], [rb - 1, 1], [rb, 2]].forEach(([r, w]) => {
-        for (let c = sft - w; c <= sft + w; c++) put(r, c, 1);
-      });
-    }
+    if (name === 'server') randomHexes(out, curSeed);
     return out;
   }
 
@@ -555,6 +596,7 @@
     bloomCv.width = Math.ceil(innerWidth * Q);
     bloomCv.height = Math.ceil(innerHeight * Q);
     band.dirty = true;
+    brand.dirty = true;
   }
 
   /* ════════════ 공간에 새긴 UI — 위쪽 꺼진 띠의 바닥면 ════════════
@@ -591,7 +633,74 @@
     }
   }
   const PAD = 80;
-  const band = { cv: document.createElement('canvas'), dirty: true, info: null };
+  const band = { cv: document.createElement('canvas'), dirty: true, info: null, paint: () => paintBand() };
+  // 로고 정보 (띠 바닥 왼쪽 끝에 그린다)
+  const brand = { cv: document.createElement('canvas'), dirty: true, info: null, key: '', paint: () => paintBrand() };
+  /* 로고는 왼쪽 위 켜진 계단 윗면에 붙인다(높이 ON). 투영으로 바깥·위로 밀리는 만큼을 되짚어,
+     화면에서는 띠 높이 가운데 · 왼쪽에서 4.6% 자리에 오게 한다. 곡률은 위쪽 띠와 같다. */
+  function paintBrand() {
+    const w = W + PAD * 2;
+    brand.cv.width = Math.ceil(w * D);
+    brand.cv.height = Math.ceil(TH * D);
+    const g = brand.cv.getContext('2d');
+    g.setTransform(D, 0, 0, D, 0, 0);
+    g.clearRect(0, 0, w, TH);
+    const info = brand.info || {};
+    const u = 1 / k;
+    const f = 1 + ON * KP;
+    const yTop = y0 + (rows.top + 1) * TH;
+    const wantX = W * 0.046;
+    const wantY = yTop + TH / 2;
+    const x = W / 2 + (wantX - W / 2 + ON * 0.06) / f;
+    const t = (2 * ((x + PAD) / w) - 1) ** 2;
+    const yScene = H / 2 + (wantY - BEND * t - H / 2 + ON * 0.36) / f;
+    // 띠 그림의 위쪽을 로고 가운데가 그림 가운데에 오도록 내린다
+    brand.yTop = yScene - TH / 2;
+    const cy = TH / 2;
+    const size = 50 * u;
+    drawBrandMark(g, PAD + x, cy - size / 2, size, info.type);
+    const tx = PAD + x + size + 18 * u;
+    text(g, 'MCES', tx, cy - 8 * u, 30, { weight: 800, track: 12.6, color: P.ink });
+    text(g, `SERVER TERMINAL · ${info.device || '0x0000'}`, tx, cy + 18 * u, 10, { mono: true, track: 2.2, color: P.ink2 });
+    brand.dirty = false;
+  }
+  function drawBrandMark(g, x, y, size, type) {
+    g.save();
+    g.translate(x, y);
+    const m = size / 56;
+    g.scale(m, m);
+    g.translate(-32, -32);
+    g.shadowColor = 'rgba(77, 107, 255, 0.55)';
+    g.shadowBlur = 10;
+    const gg = g.createLinearGradient(32, 32, 88, 88);
+    gg.addColorStop(0, '#1530e6');
+    gg.addColorStop(0.42, '#2a4dff');
+    gg.addColorStop(0.7, '#5b78ff');
+    gg.addColorStop(1, '#8f98ad');
+    g.fillStyle = gg;
+    g.beginPath();
+    g.roundRect(32, 32, 56, 56, 4);
+    g.fill();
+    g.shadowBlur = 0;
+    g.globalAlpha = 0.35;
+    g.fillStyle = '#d6e2f0';
+    g.beginPath();
+    g.moveTo(66, 32);
+    g.lineTo(72, 32);
+    g.lineTo(56, 88);
+    g.lineTo(50, 88);
+    g.closePath();
+    g.fill();
+    g.globalAlpha = 1;
+    g.fillStyle = '#ffffff';
+    for (const pc of markPieces(type || 'paper')) {
+      g.beginPath();
+      if (pc.circle) g.arc(pc.circle[0], pc.circle[1], pc.circle[2], 0, Math.PI * 2);
+      else g.roundRect(pc.rect[0], pc.rect[1], pc.rect[2], pc.rect[3], 1);
+      g.fill();
+    }
+    g.restore();
+  }
   // 띠 바닥이 시작하는 x (왼쪽 켜진 계단 바로 오른쪽)
   function bandStartX() {
     const r = rows.top + 1;
@@ -611,7 +720,8 @@
     // 꺼진 띠는 바닥이 가운데 쪽으로 밀려 위쪽 일부가 벽에 가린다 — 보이는 바닥의 가운데에 글자를 둔다
     const yt = y0 + (rows.top + 1) * TH;
     const seen = project([W / 2, yt], OFF)[1];
-    const cy = Math.max(18 * u, (yt + TH - seen) / 2 / (1 + OFF * KP));
+    const vis = yt + TH - seen;
+    const cy = Math.max(18 * u, vis / 2 / (1 + OFF * KP));
     // 오른쪽: 코드와 PC 사양 — 띠 오른쪽 끝(켜진 사선이 시작하는 곳) 앞에서 끝낸다
     const re = fromC(rows.top + 1, bandRight);
     const reX = Math.min(...tri(rows.top + 1, re.k, re.t).map((q) => q[0]));
@@ -625,26 +735,26 @@
   const BEND = 22;
   const SHRINK = 0.16;
   const STRIPS = 48;
-  function bandPoint(yTop, sign, x, y) {
+  function bandPoint(yTop, sign, x, y, z = OFF) {
     const w = W + PAD * 2;
     const u = x / w;
     const t = (2 * u - 1) * (2 * u - 1);
-    const p = project([x - PAD, yTop + y], OFF);
-    const m = project([x - PAD, yTop + TH / 2], OFF);
+    const p = project([x - PAD, yTop + y], z);
+    const m = project([x - PAD, yTop + TH / 2], z);
     const mid = m[1] + sign * BEND * t;
     return [p[0], mid + (p[1] - m[1]) * (1 - SHRINK * t)];
   }
-  function blitBand(b, yTop, sign) {
-    if (b.dirty) paintBand();
+  function blitBand(b, yTop, sign, z = OFF) {
+    if (b.dirty) b.paint();
     const w = W + PAD * 2;
     const sw = w / STRIPS;
     ctx.save();
     for (let i = 0; i < STRIPS; i++) {
       const xa = i * sw;
       const xb = xa + sw;
-      const o = bandPoint(yTop, sign, xa, 0);
-      const u = bandPoint(yTop, sign, xb, 0);
-      const v = bandPoint(yTop, sign, xa, TH);
+      const o = bandPoint(yTop, sign, xa, 0, z);
+      const u = bandPoint(yTop, sign, xb, 0, z);
+      const v = bandPoint(yTop, sign, xa, TH, z);
       ctx.setTransform((D * (u[0] - o[0])) / sw, (D * (u[1] - o[1])) / sw, (D * (v[0] - o[0])) / TH, (D * (v[1] - o[1])) / TH, D * o[0], D * o[1]);
       ctx.drawImage(b.cv, xa * D, 0, (sw + 1) * D, TH * D, 0, 0, sw + 1, TH);
     }
@@ -1312,6 +1422,22 @@
      (첨부된 천궁 로더를 SCRF 테마로 옮긴 것: 신성 기하학 고리 · 떠오르는 빛 알갱이 · 가로지르는 빛의 띠 ·
       파인 원판과 네 모서리 눈금 · 원 궤도 안의 삼각형 로고 · 상태 문구와 진행 막대)
      금색 선은 코발트로, 금색은 점과 짧은 표식에만. 바탕은 꺼진 화면색. */
+  // 로딩 화면 색 — 밝게는 흰 화면, 어둡게는 꺼진 화면
+  const LP_DARK = {
+    bg: '#04060a', grid: 'rgba(120, 150, 180, 0.13)', scan: 'rgba(0, 0, 0, 0.22)', halo: [40, 70, 255, 0.2],
+    geo: 'rgba(143, 168, 255, 0.9)', geoFaint: 'rgba(143, 168, 255, 0.4)', numeral: 'rgba(217, 228, 240, 0.7)', node: '#04060a',
+    floor: [4, 6, 10], waveGlow: 'rgba(91, 120, 255, 0.8)', discA: '#0b111c', discB: '#03050a', discLine: 'rgba(143, 168, 255, 0.18)',
+    cap: 'rgba(170, 186, 204, 0.7)', status: '#e8eef8', statusGlow: 'rgba(120, 180, 255, 0.6)', task: 'rgba(170, 186, 204, 0.85)',
+    rail: 'rgba(120, 150, 180, 0.22)', mote: '#f0d69a', gold: '#e2b45a', geoAlpha: 0.6,
+  };
+  const LP_LIGHT = {
+    bg: null, grid: 'rgba(157, 176, 194, 0.3)', scan: 'rgba(27, 34, 48, 0.025)', halo: [31, 60, 255, 0.1],
+    geo: 'rgba(31, 60, 255, 0.55)', geoFaint: 'rgba(31, 60, 255, 0.22)', numeral: 'rgba(27, 34, 48, 0.42)', node: '#f7fafe',
+    floor: [243, 247, 252], waveGlow: 'rgba(31, 60, 255, 0.35)', discA: '#ffffff', discB: '#e6edf6', discLine: 'rgba(31, 60, 255, 0.16)',
+    cap: '#6a7486', status: '#1b2230', statusGlow: 'rgba(0, 0, 0, 0)', task: '#4b5566',
+    rail: 'rgba(27, 34, 48, 0.12)', mote: '#c49a3c', gold: '#c49a3c', geoAlpha: 0.75,
+  };
+  const LP = () => (root.dataset.theme === 'dark' ? LP_DARK : LP_LIGHT);
   const LD = { on: false, t0: 0, cap: '', status: '', task: '', taskAt: 0, target: 0, shown: 0, doneAt: 0 };
   const ease = (x) => 1 - Math.pow(1 - Math.max(0, Math.min(1, x)), 3);
   const clamp01 = (x) => Math.max(0, Math.min(1, x));
@@ -1358,8 +1484,9 @@
     g.clearRect(0, 0, geoCv.c.width, geoCv.c.height);
     g.setTransform(D * s, 0, 0, D * s, D * cx, D * cy);
     g.lineWidth = u / s;
-    const main = 'rgba(143, 168, 255, 0.9)';
-    const faint = 'rgba(143, 168, 255, 0.4)';
+    const lp = LP();
+    const main = lp.geo;
+    const faint = lp.geoFaint;
     const pr = (gd) => ease((t - gd * 1000) / 2600);
     const ring = (r, gd, col, cxo = 0, cyo = 0) => {
       const p = pr(gd);
@@ -1390,11 +1517,11 @@
       const tp = polar(408, j * 30 + 15);
       g.beginPath();
       g.arc(n[0], n[1], j % 3 === 0 ? 11 : 6, 0, Math.PI * 2);
-      g.fillStyle = OFF_FILL;
+      g.fillStyle = lp.node;
       g.fill();
-      g.strokeStyle = j % 3 === 0 ? 'rgba(230, 180, 90, 0.9)' : main;
+      g.strokeStyle = j % 3 === 0 ? lp.gold : main;
       g.stroke();
-      g.fillStyle = 'rgba(217, 228, 240, 0.7)';
+      g.fillStyle = lp.numeral;
       g.fillText(NUM[j], tp[0], tp[1]);
     }
     // 안쪽 — 육각성, 생명의 씨앗, 살
@@ -1435,7 +1562,7 @@
     g.globalCompositeOperation = 'source-over';
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.globalAlpha = alpha * 0.6;
+    ctx.globalAlpha = alpha * lp.geoAlpha;
     ctx.drawImage(geoCv.c, 0, 0);
     ctx.restore();
   }
@@ -1475,14 +1602,20 @@
     return out;
   };
   function markPieces(type) {
-    if (type === 'vanilla') return [0, 1, 2].map((i) => ({ pts: arcPts(60, 60, 21, -Math.PI / 2 + (i * 2 * Math.PI) / 3, -Math.PI / 2 + ((i + 1) * 2 * Math.PI) / 3), closed: false, w: 6 }));
-    if (type === 'hybrid') return [{ pts: sq(38, 38, 19, 44), closed: true, w: 5 }, { pts: sq(63, 38, 19, 19), closed: true, w: 5 }, { pts: sq(63, 63, 19, 19), closed: true, w: 5 }];
-    if (type === 'forge' || type === 'neoforge' || type === 'fabric' || type === 'mod') return [sq(38, 38, 19, 19), sq(63, 38, 19, 19), sq(38, 63, 19, 19), sq(63, 63, 19, 19)].map((pts) => ({ pts, closed: true, w: 5 }));
-    const b = [[37, 37], [83, 37], [83, 83], [37, 83]];
-    return [0, 1, 2, 3].map((i) => ({ pts: [b[i], b[(i + 1) % 4]], closed: false, w: 7 }));
+    const cs = 56 * 0.62;
+    const c0 = 60 - cs / 2;
+    const gap = cs * 0.14;
+    const half = (cs - gap) / 2;
+    if (type === 'vanilla') return [{ circle: [60, 60, cs / 2] }];
+    if (type === 'hybrid') return [{ rect: [c0, c0, half, cs] }, { rect: [c0 + half + gap, c0, half, half] }, { rect: [c0 + half + gap, c0 + half + gap, half, half] }];
+    if (type === 'forge' || type === 'neoforge' || type === 'fabric' || type === 'mod') {
+      return [[0, 0], [1, 0], [0, 1], [1, 1]].map(([i, j]) => ({ rect: [c0 + i * (half + gap), c0 + j * (half + gap), half, half] }));
+    }
+    return [{ rect: [c0, c0, cs, cs] }];
   }
   function drawLoader(now) {
     const u = 1 / k;
+    const lp = LP();
     const t = now - LD.t0;
     const done = LD.doneAt ? now - LD.doneAt : -1;
     const inA = clamp01(t / 450);
@@ -1503,8 +1636,9 @@
     const bgA = inA * outBg;
     if (bgA > 0) {
       const halo = ctx.createRadialGradient(cx, cy, 0, cx, cy, 0.42 * Math.max(W, H));
-      halo.addColorStop(0, `rgba(40, 70, 255, ${0.2 * bgA})`);
-      halo.addColorStop(1, 'rgba(40, 70, 255, 0)');
+      const [hr, hg, hb, ha] = lp.halo;
+      halo.addColorStop(0, `rgba(${hr}, ${hg}, ${hb}, ${ha * bgA})`);
+      halo.addColorStop(1, `rgba(${hr}, ${hg}, ${hb}, 0)`);
       ctx.fillStyle = halo;
       ctx.fillRect(0, 0, W, H);
       drawGeo(t, cx, cy, bgA);
@@ -1515,15 +1649,15 @@
         const ph = (((now + m.dl) % m.t) + m.t) % m.t / m.t;
         const a = ph < 0.15 ? (ph / 0.15) * 0.9 : ph < 0.7 ? 0.9 - ((ph - 0.15) / 0.55) * 0.4 : 0.5 * (1 - (ph - 0.7) / 0.3);
         ctx.globalAlpha = a * bgA;
-        ctx.fillStyle = '#f0d69a';
+        ctx.fillStyle = lp.mote;
         ctx.beginPath();
         ctx.arc(m.x * W, m.y * H - ph * 0.26 * H, (m.s * u) / 2, 0, Math.PI * 2);
         ctx.fill();
       }
       ctx.restore();
       const fl = ctx.createLinearGradient(0, H * 0.48, 0, H);
-      fl.addColorStop(0, 'rgba(4, 6, 10, 0)');
-      fl.addColorStop(0.62, 'rgba(4, 6, 10, 1)');
+      fl.addColorStop(0, `rgba(${lp.floor.join(', ')}, 0)`);
+      fl.addColorStop(0.62, `rgba(${lp.floor.join(', ')}, 1)`);
       ctx.fillStyle = fl;
       ctx.fillRect(0, H * 0.48, W, H * 0.52);
     }
@@ -1549,7 +1683,7 @@
       strokePts(mainS);
       ctx.strokeStyle = waveGrad(0.95);
       ctx.lineWidth = 2.4 * u;
-      ctx.shadowColor = 'rgba(91, 120, 255, 0.8)';
+      ctx.shadowColor = lp.waveGlow;
       ctx.shadowBlur = 10;
       ctx.stroke();
       ctx.restore();
@@ -1563,16 +1697,16 @@
       ctx.save();
       ctx.globalAlpha = pA;
       const pg = ctx.createRadialGradient(cx, cy - r * 0.2, r * 0.2, cx, cy, r);
-      pg.addColorStop(0, '#0b111c');
-      pg.addColorStop(1, '#03050a');
+      pg.addColorStop(0, lp.discA);
+      pg.addColorStop(1, lp.discB);
       ctx.fillStyle = pg;
       ctx.beginPath();
       ctx.arc(cx, cy, r, 0, Math.PI * 2);
       ctx.fill();
-      ctx.strokeStyle = 'rgba(143, 168, 255, 0.18)';
+      ctx.strokeStyle = lp.discLine;
       ctx.lineWidth = u;
       ctx.stroke();
-      ctx.fillStyle = '#e2b45a';
+      ctx.fillStyle = lp.gold;
       ctx.shadowColor = 'rgba(226, 180, 90, 0.8)';
       ctx.shadowBlur = 6;
       const e = panel / 2 + 16 * u;
@@ -1604,29 +1738,58 @@
       const op = ease((lt - 50) / 1200);
       if (op > 0) {
         ctx.beginPath();
-        ctx.arc(60, 60, 40, -Math.PI / 2, -Math.PI / 2 + op * Math.PI * 2);
-        ctx.strokeStyle = '#e2b45a';
+        ctx.arc(60, 60, 47, -Math.PI / 2, -Math.PI / 2 + op * Math.PI * 2);
+        ctx.strokeStyle = lp.gold;
         ctx.lineWidth = 2.8;
         ctx.shadowColor = 'rgba(226, 180, 90, 0.7)';
         ctx.stroke();
       }
-      // 조각마다 글리치하며 그려진다 — 서버 종류의 표시(플러그인 네모 · 모드 네 칸 · 바닐라 원 · 하이브리드 네모+두 칸)
-      ctx.shadowColor = 'rgba(91, 120, 255, 0.9)';
-      markPieces(LD.mark).forEach((pc, i) => {
-        const st = lt - (450 + i * 300);
-        if (st <= 0) return;
-        const p = ease(st / 420);
-        const gp = st / 550;
-        const jx = gp < 0.12 ? -5 : gp < 0.24 ? 4 : gp < 0.36 ? -2 : 0;
-        const ga = gp < 0.12 ? 0.2 : gp < 0.24 ? 1 : gp < 0.36 ? 0.35 : gp < 0.58 ? 1 : gp < 0.66 ? 0.55 : 1;
-        ctx.globalAlpha = logoA * ga;
+      // MCES 표시 그대로 — 코발트 유리 네모가 들어서고, 안의 흰 종류 모양(플러그인 네모 · 모드 네 칸 · 바닐라 원 · 하이브리드)이 조각마다 글리치하며 켜진다
+      const bp = ease((lt - 250) / 500);
+      if (bp > 0) {
         ctx.save();
-        ctx.translate(jx, 0);
+        ctx.globalAlpha = logoA * bp;
+        ctx.translate(60, 60);
+        ctx.scale(0.9 + 0.1 * bp, 0.9 + 0.1 * bp);
+        ctx.translate(-60, -60);
+        ctx.shadowColor = 'rgba(77, 107, 255, 0.6)';
+        ctx.shadowBlur = 14;
+        const gg = ctx.createLinearGradient(32, 32, 88, 88);
+        gg.addColorStop(0, '#1530e6');
+        gg.addColorStop(0.42, '#2a4dff');
+        gg.addColorStop(0.7, '#5b78ff');
+        gg.addColorStop(1, '#8f98ad');
+        ctx.fillStyle = gg;
         ctx.beginPath();
-        partial(ctx, pc.pts, p, pc.closed);
-        ctx.strokeStyle = '#8fa8ff';
-        ctx.lineWidth = pc.w;
-        ctx.stroke();
+        ctx.roundRect(32, 32, 56, 56, 4);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        // 유리 조각 한 줄기
+        ctx.globalAlpha = logoA * bp * 0.35;
+        ctx.fillStyle = '#d6e2f0';
+        ctx.beginPath();
+        ctx.moveTo(66, 32);
+        ctx.lineTo(72, 32);
+        ctx.lineTo(56, 88);
+        ctx.lineTo(50, 88);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      }
+      markPieces(LD.mark).forEach((pc, i) => {
+        const st = lt - (650 + i * 260);
+        if (st <= 0) return;
+        const gp = st / 550;
+        const jx = gp < 0.12 ? -4 : gp < 0.24 ? 3 : gp < 0.36 ? -2 : 0;
+        const ga = gp < 0.12 ? 0.25 : gp < 0.24 ? 1 : gp < 0.36 ? 0.35 : gp < 0.58 ? 1 : gp < 0.66 ? 0.55 : 1;
+        ctx.save();
+        ctx.globalAlpha = logoA * ga;
+        ctx.translate(jx, 0);
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        if (pc.circle) ctx.arc(pc.circle[0], pc.circle[1], pc.circle[2], 0, Math.PI * 2);
+        else ctx.roundRect(pc.rect[0], pc.rect[1], pc.rect[2], pc.rect[3], 1);
+        ctx.fill();
         ctx.restore();
       });
       ctx.restore();
@@ -1649,7 +1812,7 @@
       } catch {
         /* 오래된 엔진 */
       }
-      ctx.fillStyle = 'rgba(170, 186, 204, 0.7)';
+      ctx.fillStyle = lp.cap;
       ctx.fillText(LD.cap, cx, top);
       try {
         ctx.letterSpacing = '0px';
@@ -1657,8 +1820,8 @@
         /* 오래된 엔진 */
       }
       set(600, 17, UI_FONT);
-      ctx.fillStyle = '#e8eef8';
-      ctx.shadowColor = 'rgba(120, 180, 255, 0.6)';
+      ctx.fillStyle = lp.status;
+      ctx.shadowColor = lp.statusGlow;
       ctx.shadowBlur = 8;
       const dots = '.'.repeat((Math.floor(now / 420) % 3) + 1);
       const sw = ctx.measureText(LD.status).width;
@@ -1673,12 +1836,12 @@
       const tw = ctx.measureText(LD.task).width;
       const ty = top + (58 + 4 * (1 - sa)) * u;
       ctx.globalAlpha = cA * sa;
-      ctx.fillStyle = 'rgba(170, 186, 204, 0.85)';
+      ctx.fillStyle = lp.task;
       ctx.fillText(LD.task, cx + 11 * u, ty);
       ctx.save();
       ctx.translate(cx - tw / 2 - 9 * u, ty);
       ctx.rotate(Math.PI / 4);
-      ctx.strokeStyle = '#e2b45a';
+      ctx.strokeStyle = lp.gold;
       ctx.lineWidth = 1.2 * u;
       ctx.strokeRect(-4.5 * u, -4.5 * u, 9 * u, 9 * u);
       ctx.restore();
@@ -1687,7 +1850,7 @@
       const rw = Math.min(220, innerWidth * 0.52) * u;
       const ry = top + 84 * u;
       const rx = cx - rw / 2;
-      ctx.fillStyle = 'rgba(120, 150, 180, 0.22)';
+      ctx.fillStyle = lp.rail;
       ctx.fillRect(rx, ry - 1.5 * u, rw, 3 * u);
       const fg = ctx.createLinearGradient(rx, 0, rx + rw, 0);
       fg.addColorStop(0, '#2a4dff');
@@ -1703,8 +1866,9 @@
   const TR_DUR = 650;
   const easeIO = (p) => (p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2);
   const tr = { live: false, t0: 0, end: 0, done: null };
-  function transitionTo(name, lead = 0) {
+  function transitionTo(name, seed, lead = 0) {
     curLayout = name;
+    curSeed = seed || '';
     const want = layoutMap(name);
     for (const key of Object.keys(want)) if (!tiles[key]) tiles[key] = { ...want[key], z: 0 };
     const diag = Math.hypot(W / 2, H / 2);
@@ -1809,44 +1973,73 @@
   /* ════════════ 새로 고침 — 누른 자리에서 충격파가 퍼지며, 지나간 칸이 새 화면으로 바뀐다 (테마 전환) ════════════ */
   const oldSnap = document.createElement('canvas');
   const oldSnapG = oldSnap.getContext('2d');
-  const wave = { on: false, t0: 0, o: [0, 0], v: 1.5 };
+  const wave = { on: false, t0: 0, o: [0, 0], v: 1.6, done: null };
+  const oldMask = document.createElement('canvas');
+  const oldMaskG = oldMask.getContext('2d');
   function drawRefresh(now) {
     const R = (now - wave.t0) * wave.v;
-    const old = new Path2D();
+    const SOFT = 110;
+    // 지나간 자리는 새 화면, 아직 안 지나간 자리는 옛 화면 — 경계는 부드럽게
+    if (oldMask.width !== canvas.width || oldMask.height !== canvas.height) {
+      oldMask.width = canvas.width;
+      oldMask.height = canvas.height;
+    }
+    const g = oldMaskG;
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.globalCompositeOperation = 'source-over';
+    g.clearRect(0, 0, oldMask.width, oldMask.height);
+    g.drawImage(oldSnap, 0, 0);
+    g.globalCompositeOperation = 'destination-out';
+    const ox2 = wave.o[0] * D;
+    const oy2 = wave.o[1] * D;
+    const r0 = Math.max(0, (R - SOFT) * D);
+    const r1 = (R + SOFT * 0.4) * D;
+    const rg = g.createRadialGradient(ox2, oy2, r0, ox2, oy2, Math.max(r0 + 1, r1));
+    rg.addColorStop(0, 'rgba(0,0,0,1)');
+    rg.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = rg;
+    g.beginPath();
+    g.arc(ox2, oy2, Math.max(r0 + 1, r1), 0, Math.PI * 2);
+    g.fill();
+    g.fillStyle = '#000';
+    g.beginPath();
+    g.arc(ox2, oy2, r0, 0, Math.PI * 2);
+    g.fill();
+    g.globalCompositeOperation = 'source-over';
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.drawImage(oldMask, 0, 0);
+    ctx.restore();
+    // 파면이 지나가는 칸이 잠깐 밝아진다 (새로 고쳐지는 패널)
     const front = new Path2D();
-    let pending = false;
     eachCell((r, kk, tt, j) => {
       const T = tri(r, kk, tt);
       const c = centroid(T);
-      const d = Math.hypot(c[0] - wave.o[0], c[1] - wave.o[1]) + groupOf(r, kk, j, c).h * 90;
-      const shape = shapeOf(r, kk, tt, T);
-      if (d > R) {
-        addShape(old, shape);
-        pending = true;
-      } else if (d > R - 150) addShape(front, shape);
+      const d = Math.hypot(c[0] - wave.o[0], c[1] - wave.o[1]) + groupOf(r, kk, j, c).h * 70;
+      if (d < R && d > R - 120) addShape(front, T);
     });
-    ctx.save();
     ctx.setTransform(D, 0, 0, D, 0, 0);
-    ctx.clip(old);
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.drawImage(oldSnap, 0, 0);
-    ctx.restore();
-    ctx.setTransform(D, 0, 0, D, 0, 0);
-    ctx.fillStyle = 'rgba(225, 242, 255, 0.28)';
+    ctx.fillStyle = root.dataset.theme === 'dark' ? 'rgba(143, 168, 255, 0.10)' : 'rgba(255, 255, 255, 0.35)';
     ctx.fill(front);
-    if (!pending && R > 200) wave.on = false;
+    if (R - SOFT > Math.hypot(W, H) + 200) {
+      wave.on = false;
+      const cb = wave.done;
+      wave.done = null;
+      if (cb) cb();
+    }
   }
 
   // 꺼진 화면 — 패널 사이 이음매, 그 위에 로딩 화면, 옅은 주사선
   function drawOff(now) {
+    const lp = LP();
     ctx.setTransform(D, 0, 0, D, 0, 0);
-    ctx.fillStyle = OFF_FILL;
+    ctx.fillStyle = lp.bg || paperGrad();
     ctx.fillRect(0, 0, W, H);
     if (LD.on) drawLoader(now);
     ctx.setTransform(D, 0, 0, D, 0, 0);
-    gridLines(ctx, DARK_LINE);
+    gridLines(ctx, lp.grid);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.22)';
+    ctx.fillStyle = lp.scan;
     for (let y = 0; y < canvas.height; y += 3 * dpr) ctx.fillRect(0, y, canvas.width, dpr);
   }
 
@@ -1854,6 +2047,14 @@
   let dirty = true;
   let lastX = 99;
   let lastY = 99;
+  function repaint() {
+    readPalette();
+    P.bloom = parseFloat(getComputedStyle(root).getPropertyValue('--scene-bloom')) || 0.5;
+    buildCache();
+    band.dirty = true;
+    brand.dirty = true;
+    dirty = true;
+  }
   function rebuild() {
     resize();
     readPalette();
@@ -1909,7 +2110,13 @@
     if (power.phase === 'boot' || power.phase === 'up') drawCover(now);
     if (power.phase === 'switch') compositeSwitch(now);
     edgeFX();
+    if (power.phase === 'on') drawBrandOnScene();
     if (wave.on) drawRefresh(now);
+  }
+  function drawBrandOnScene() {
+    if (brand.dirty) paintBrand();
+    blitBand(brand, brand.yTop, 1, ON);
+    ctx.setTransform(D, 0, 0, D, 0, 0);
   }
   function drawScene() {
     const sunk = [];
@@ -1926,6 +2133,8 @@
     ctx.setTransform(D, 0, 0, D, 0, 0);
     ctx.drawImage(cache.ground, 0, 0, W, H);
     drawRaisedPass(raised, walls);
+    // 구동·전환 중에는 패널과 함께 덮이도록 여기서, 다 켜진 뒤에는 렌즈를 거치지 않게 맨 위에 그린다
+    if (power.phase !== 'on') drawBrandOnScene();
     bloom();
   }
 
@@ -1954,10 +2163,11 @@
       cancelAnimationFrame(pending);
       pending = requestAnimationFrame(rebuild);
     });
-    new MutationObserver(rebuild).observe(root, { attributes: true, attributeFilter: ['data-theme'] });
+    new MutationObserver(repaint).observe(root, { attributes: true, attributeFilter: ['data-theme'] });
     if (document.fonts && document.fonts.ready) {
       document.fonts.ready.then(() => {
         band.dirty = true;
+        brand.dirty = true;
         dirty = true;
       });
     }
@@ -1966,6 +2176,15 @@
 
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   window.Scene = {
+    /** 왼쪽 위 로고: { type, device } */
+    setBrand(info) {
+      const key = JSON.stringify(info);
+      if (key === brand.key) return;
+      brand.key = key;
+      brand.info = info;
+      brand.dirty = true;
+      dirty = true;
+    },
     /** 띠 바닥면 문구: { code, right } */
     setBand(info) {
       const key = JSON.stringify(info);
@@ -1984,8 +2203,8 @@
       return wait(sp.uiAt);
     },
     /** 배경 재정렬 — 화면을 바꿀 때 */
-    arrange(name) {
-      return transitionTo(name);
+    arrange(name, seed) {
+      return transitionTo(name, seed);
     },
     /** 칸마다 채널이 바뀌듯 로딩 화면으로 넘어간다. 다 넘어가면 로딩 화면 조작 손잡이를 돌려준다 */
     toLoader(opts) {
@@ -1997,8 +2216,9 @@
       return new Promise((res) => (sw.done = () => res(handle)));
     },
     /** 로딩 화면에서 새 배치의 배경으로 칸마다 넘어온다 */
-    fromLoader(name) {
+    fromLoader(name, seed) {
       curLayout = name;
+      curSeed = seed || '';
       tiles = layoutMap(name);
       buildCache();
       sw.dir = 'out';
@@ -2022,11 +2242,12 @@
       const cxw = innerWidth / 2 + (clientX - innerWidth / 2) / SCALE;
       const cyw = innerHeight / 2 + (clientY - innerHeight / 2) / SCALE;
       apply();
-      rebuild();
+      repaint();
       wave.o = [cxw / k, cyw / k];
       wave.t0 = performance.now();
       wave.on = true;
       dirty = true;
+      return new Promise((res) => (wave.done = res));
     },
     /** 꺼진 패널 화면에 로딩 화면을 띄운다 */
     loader(opts) {

@@ -52,6 +52,7 @@
     tab: 'overview',
     specs: null,
     settings: { theme: 'light' },
+    appInfo: { version: '', device: '' },
     tunnel: { status: 'idle', addresses: {} },
     javaInstalled: [],
     alerts: {}, // serverId -> [alert]
@@ -91,6 +92,7 @@
     const faulty = Math.random() < 0.5;
     const booting = window.Scene ? window.Scene.boot(faulty) : Promise.resolve();
     state.settings = { ...state.settings, ...((await call('app:settings')) || {}) };
+    state.appInfo = (await call('app:info')) || { version: '', device: '' };
     applyTheme(state.settings.theme);
     const [specs, servers, tunnel, javaInstalled] = await Promise.all([call('system:specs'), call('servers:list'), call('tunnel:state'), call('java:installed')]);
     state.specs = specs;
@@ -126,6 +128,8 @@
     root.dataset.ui = 'off';
   }
   const layoutOf = () => (state.page === 'server' ? 'server' : 'home');
+  // 서버 페이지의 배경 배치는 서버마다 다르다 (서버 id로 정한다)
+  const seedOf = () => (state.page === 'server' ? state.selected : '');
   /** 화면 바꾸기: setup()으로 상태를 바꾸고, 배경을 재정렬한 뒤 새 UI를 띄운다 */
   async function goto(setup) {
     if (busy) return;
@@ -133,7 +137,7 @@
     await uiOut();
     setup();
     render();
-    if (window.Scene) await window.Scene.arrange(layoutOf());
+    if (window.Scene) await window.Scene.arrange(layoutOf(), seedOf());
     uiIn('soft');
     busy = false;
   }
@@ -154,7 +158,7 @@
   async function leaveLoader(setup) {
     setup();
     render();
-    if (window.Scene) await window.Scene.fromLoader(layoutOf());
+    if (window.Scene) await window.Scene.fromLoader(layoutOf(), seedOf());
     root.classList.remove('is-loading');
     uiIn('soft');
   }
@@ -337,10 +341,11 @@
         async (theme) => {
           // 패널 새로 고침 — 테마 버튼 자리에서 충격파가 퍼지며 지나간 칸이 새 색으로 바뀐다
           const at = $('#paneFoot .seg').getBoundingClientRect();
-          if (window.Scene) window.Scene.refresh(at.left + at.width / 2, at.top + at.height / 2, () => applyTheme(theme));
+          if (window.Scene) await window.Scene.refresh(at.left + at.width / 2, at.top + at.height / 2, () => applyTheme(theme));
           else applyTheme(theme);
-          state.settings = (await call('app:setSettings', { theme })) || state.settings;
           if (live.updateMetrics) live.updateMetrics();
+          // 창 제목 줄(운영체제가 그린다)은 패널이 다 바뀐 뒤에 바꾼다 — 먼저 바뀌면 어색하다
+          state.settings = (await call('app:setSettings', { theme })) || state.settings;
         },
         { name: '테마' },
       ),
@@ -350,7 +355,7 @@
 
   /** 왼쪽 위 로고 — 지금 보고 있는 서버(또는 만들고 있는 서버)의 종류 표시를 쓴다 */
   function renderBrand() {
-    put($('#brand'), typeMark(brandType(), '.brand-mark'), h('div.brand-text', null, h('span.brand-word', null, 'MCES'), h('span.brand-sub', null, 'SERVER TERMINAL · 0x3F7A')));
+    if (window.Scene) window.Scene.setBrand({ type: brandType(), device: state.appInfo.device || '' });
   }
 
   /** 위쪽 꺼진 띠 바닥면에 새기는 코드와 PC 사양 */
@@ -360,13 +365,16 @@
     const running = state.servers.filter((s) => s.status === 'running').length;
     const java = state.javaInstalled.length ? state.javaInstalled.map((j) => j.major).join('·') : '없음';
     const right = [`SV ${state.servers.length} · RUN ${running}`, specs ? `MEM ${specs.totalGb}GB` : null, specs ? `CPU ${specs.cpuCores}C` : null, `JAVA ${java}`].filter(Boolean).join('  ·  ');
-    window.Scene.setBand({ code: 'MC.ES-0.7', right });
+    window.Scene.setBand({ code: `MC.ES-${state.appInfo.version || ''}`, right });
   }
 
   function renderMain() {
     live = {};
     progressViews.clear();
     const main = $('#main');
+    root.dataset.page = state.page;
+    const holder = state.page === 'server' ? $('#colB') : $('.pane-r');
+    if (main.parentElement !== holder) holder.appendChild(main);
     const detail = $('#detail');
     if (state.page === 'home') {
       put(main, renderCreate());
@@ -958,8 +966,19 @@
 
     /** 파일에서 추가 (선택 창 또는 끌어다 놓기) */
     const importFiles = async (paths) => {
+      // 모드팩은 모드를 받는 동안 진행 막대를 보여 준다
+      progressBox.classList.remove('hidden');
+      bar.set(0);
+      barLabel.textContent = '파일 확인 중';
       const r = await call('addons:importFiles', s.id, paths);
+      progressBox.classList.add('hidden');
       if (!r || r === true) return;
+      for (const p of r.packs || []) {
+        const extra = [p.disabled.length ? `화면 전용 모드 ${p.disabled.length}개는 꺼 둠` : null, p.failed.length ? `${p.failed.length}개 받기 실패` : null].filter(Boolean).join(' · ');
+        toast(`모드팩 ${p.name}${p.version ? ` ${p.version}` : ''} — 모드 ${p.mods}개 · 설정 파일 ${p.overrides}개 추가${extra ? ` · ${extra}` : ''}${r.needsRestart ? ' — 재시작 시 적용' : ''}`, { kind: p.failed.length ? 'error' : 'ok', timeout: 9000 });
+        for (const w of p.warnings) toast(w, { kind: 'error', timeout: 9000 });
+        if (p.failed.length) console.warn('모드팩 받기 실패', p.failed);
+      }
       for (const a of r.added) {
         const how = a.fromModrinth ? ' (Modrinth 파일로 확인)' : '';
         if (!a.enabled) toast(`${a.title} 추가 — 버전 불일치로 꺼 둠: ${a.compat.reason}`, { kind: 'error', timeout: 8000 });
@@ -968,7 +987,7 @@
       for (const x of r.rejected) toast(`${x.file} 추가 불가 — ${x.reason}`, { kind: 'error', timeout: 8000 });
       refreshInstalled();
     };
-    const fileExt = s.type === 'vanilla' ? '.zip' : '.jar';
+    const fileExt = s.type === 'vanilla' ? '.zip' : s.type === 'paper' ? '.jar' : '.jar · 모드팩(.zip · .mrpack)';
     const dropZone = h(
       'div.drop-zone',
       {

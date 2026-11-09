@@ -17,6 +17,7 @@ const props = require('./properties');
 const optimize = require('./optimize');
 const modrinth = require('./modrinth');
 const addonMeta = require('./addon-meta');
+const modpack = require('./modpack');
 const world = require('./world');
 const serverImport = require('./server-import');
 const gamerules = require('./gamerules');
@@ -1183,14 +1184,29 @@ class ServerManager extends EventEmitter {
    * 같은 파일이 Modrinth 에 있으면 Modrinth 설치와 똑같이 기록해 업데이트·호환성 검사를 그대로 쓴다.
    * @returns {Promise<{added: object[], rejected: {file: string, reason: string}[]}>}
    */
-  async importFiles(id, files) {
+  async importFiles(id, files, onProgress = () => {}) {
     const base0 = Servers.get(id);
     const dir = this.dir(id);
     const ext = base0.type === 'vanilla' ? /\.zip$/i : /\.jar$/i;
     const added = [];
     const rejected = [];
+    const packs = [];
     for (const src of files) {
       const base = path.basename(src);
+      // 모드 서버에 넣은 모드팩(CurseForge zip · Modrinth .mrpack): 모드를 받아 mods/ 에, overrides 는 서버 폴더에
+      if (base0.type !== 'vanilla' && base0.type !== 'paper' && /\.(zip|mrpack)$/i.test(base)) {
+        const info = await modpack.read(src);
+        if (!info) {
+          rejected.push({ file: base, reason: '모드팩 정보(manifest.json) 없는 zip' });
+          continue;
+        }
+        try {
+          packs.push(await modpack.install(src, dir, base0, onProgress));
+        } catch (e) {
+          rejected.push({ file: base, reason: e.message });
+        }
+        continue;
+      }
       if (!ext.test(base)) {
         rejected.push({ file: base, reason: base0.type === 'vanilla' ? '데이터팩(.zip)만 가능' : '.jar 파일만 가능' });
         continue;
@@ -1262,7 +1278,7 @@ class ServerManager extends EventEmitter {
       added.push({ title: record.title, fileName: base, fromModrinth: !!record.projectId, compat: c, enabled: record.enabled });
     }
     this.emitServer(id);
-    return { added, rejected, needsRestart: this.inst(id).status !== 'stopped' };
+    return { added, rejected, packs, needsRestart: this.inst(id).status !== 'stopped' };
   }
 
   /** 직접 추가한 파일들이 목표 버전에서 쓸 수 있는지 (파일 정보 기준) */
