@@ -502,17 +502,29 @@
     const startLabel = h('span.note');
     trackProgress(startKey, startBar, startLabel);
     void st;
-    put(live.head,
-      h('h1.card-title', { title: s.name }, s.name),
-      h('p.card-code', null, h('span', null, `SV-${String(state.servers.indexOf(s) + 1).padStart(2, '0')}`), h('span', null, `${TYPE[s.type].sub}${s.build ? ` #${s.build}` : ''}`), h('span', null, s.version), h('span', null, `:${s.port}`)),
-    );
-    live.note.textContent = s.status === 'running' && s.startedAt ? `${fmt.uptime(Date.now() - s.startedAt)}째 실행 중 —` : s.status === 'starting' ? '켜는 중 —' : s.status === 'stopping' ? '저장하고 끄는 중 —' : '꺼져 있음 —';
     const go =
       s.status === 'stopped'
         ? { text: '서버 켜기', fn: () => startServer(s.id) }
         : s.status === 'running'
           ? { text: '서버 끄기', fn: () => call('server:stop', s.id) }
           : { text: s.status === 'starting' ? '켜는 중…' : '끄는 중…', fn: null };
+    // 코발트 박스 위쪽(이름 칸)을 눌러도 켜고 끈다 — 아래 시작 줄과 같은 동작
+    Object.assign(live.head, { onclick: go.fn, tabIndex: go.fn ? 0 : -1, title: go.fn ? `눌러서 ${go.text}` : '' });
+    live.head.setAttribute('role', 'button');
+    live.head.setAttribute('aria-label', go.text);
+    live.head.classList.toggle('is-clickable', !!go.fn);
+    live.head.dataset.hint = s.status === 'stopped' ? 'START ▸' : s.status === 'running' ? 'STOP ■' : '';
+    live.head.onkeydown = (e) => {
+      if (go.fn && (e.key === 'Enter' || e.key === ' ')) {
+        e.preventDefault();
+        go.fn();
+      }
+    };
+    put(live.head,
+      h('h1.card-title', { title: s.name }, s.name),
+      h('p.card-code', null, h('span', null, `SV-${String(state.servers.indexOf(s) + 1).padStart(2, '0')}`), h('span', null, `${TYPE[s.type].sub}${s.build ? ` #${s.build}` : ''}`), h('span', null, s.version), h('span', null, `:${s.port}`)),
+    );
+    live.note.textContent = s.status === 'running' && s.startedAt ? `${fmt.uptime(Date.now() - s.startedAt)}째 실행 중 —` : s.status === 'starting' ? '켜는 중 —' : s.status === 'stopping' ? '저장하고 끄는 중 —' : '꺼져 있음 —';
     put(live.actions,
       s.status === 'starting' ? h('div.progress-line', null, startLabel, startBar) : null,
       h(

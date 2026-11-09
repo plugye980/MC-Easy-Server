@@ -2,7 +2,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { app, BrowserWindow, ipcMain, shell, dialog, clipboard, nativeTheme } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog, clipboard, nativeTheme, screen } = require('electron');
 
 const paths = require('./paths');
 const system = require('./system');
@@ -27,9 +27,11 @@ function send(channel, payload) {
 
 function createWindow() {
   const settings = Settings.get();
+  // 기본 창 크기 — 화면이 작으면 화면 안에 들어오게 줄인다
+  const area = screen.getPrimaryDisplay().workAreaSize;
   win = new BrowserWindow({
-    width: 1320,
-    height: 860,
+    width: Math.max(1040, Math.min(1440, area.width - 40)),
+    height: Math.max(680, Math.min(920, area.height - 40)),
     minWidth: 1040,
     minHeight: 680,
     backgroundColor: settings.theme === 'dark' ? '#05080d' : '#f3f7fc',
