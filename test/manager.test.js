@@ -298,3 +298,27 @@ test('NeoForge 서버 켜기: 설치된 인자 파일로 실행', { skip: proces
   fs.rmSync(path.join(dir, 'libraries'), { recursive: true });
   await assert.rejects(m.start(id), /NeoForge 실행 파일 없음/);
 });
+
+test('NeoForge 서버: 다른 로더용 jar 의 의존성은 띄우지 않고, Fabric API 는 이름으로 설치하지 않는다', async () => {
+  const yazl = require('yazl');
+  const zipTo = (file, files) =>
+    new Promise((resolve) => {
+      const z = new yazl.ZipFile();
+      for (const [n, c] of Object.entries(files)) z.addBuffer(Buffer.from(c), n);
+      z.end();
+      z.outputStream.pipe(fs.createWriteStream(file)).on('close', resolve);
+    });
+  const id = 'srv-neo-deps';
+  const mods = path.join(paths.serverDir(id), 'mods');
+  fs.mkdirSync(mods, { recursive: true });
+  await zipTo(path.join(mods, 'fabriconly-1.0.jar'), { 'fabric.mod.json': JSON.stringify({ id: 'fabriconly', depends: { 'fabric-api': '*', minecraft: '1.21.1' } }) });
+  await zipTo(path.join(mods, 'neomod-1.0.jar'), { 'META-INF/neoforge.mods.toml': '[[mods]]\nmodId="neomod"\n[[dependencies.neomod]]\nmodId="needed"\ntype="required"\nside="BOTH"\n' });
+  Servers.save({ id, name: 'neo', type: 'neoforge', version: '1.21.1', javaMajor: 21, memoryMb: 1024, addons: [] });
+  const m = new ServerManager();
+  const list = await m.addons(id);
+  const fab = list.find((a) => a.fileName === 'fabriconly-1.0.jar');
+  assert.ok(fab.compat.wrongType);
+  assert.deepStrictEqual(fab.missing, []);
+  assert.deepStrictEqual(list.find((a) => a.fileName === 'neomod-1.0.jar').missing, ['needed']);
+  await assert.rejects(m.installByName(id, 'fabric-api'), /Fabric 서버용/);
+});

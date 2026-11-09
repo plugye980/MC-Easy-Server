@@ -18,6 +18,7 @@ const optimize = require('./optimize');
 const modrinth = require('./modrinth');
 const addonMeta = require('./addon-meta');
 const modpack = require('./modpack');
+const crashCause = require('./crash-cause');
 const world = require('./world');
 const serverImport = require('./server-import');
 const gamerules = require('./gamerules');
@@ -727,6 +728,7 @@ class ServerManager extends EventEmitter {
       });
     }
     this.emitServer(id);
+    if (!wasStopping && (code !== 0 || wasStarting)) this.findCrashMod(id, i).catch(() => {});
     i.exitResolvers && i.exitResolvers.forEach((r) => r());
     i.exitResolvers = [];
     const server = Servers.get(id);
@@ -741,6 +743,37 @@ class ServerManager extends EventEmitter {
     }
     i.ranLongEnough = false;
     this.closeConsoleLog(id);
+  }
+
+  /**
+   * 서버가 화면 전용 코드(org.lwjgl.* · net.minecraft.client.*)를 찾다 멈췄으면 그 코드를 부른 모드를 찾아 알린다.
+   * mods 폴더를 다 열어 봐야 해서 오래 걸릴 수 있다 — 종료 알림은 먼저 띄우고 여기서는 찾으면 하나 더 띄운다
+   */
+  async findCrashMod(id, i) {
+    const lines = i.console.filter((e) => e.kind === 'out' && (!i.runStartedAt || e.t >= i.runStartedAt)).map((e) => e.line);
+    const missing = crashCause.missingClientClass(lines);
+    const modsDir = path.join(this.dir(id), 'mods');
+    if (!missing || !fs.existsSync(modsDir)) return;
+    this.log(id, `서버에 없는 화면 코드(${missing})를 찾다 멈춤 — 원인 모드 찾는 중…`, 'app');
+    const hit = await crashCause.findClientOnlyCause(lines, modsDir, { deadline: Date.now() + 3 * 60 * 1000 });
+    if (!hit) {
+      this.log(id, '원인 모드를 하나로 좁히지 못함 — 화면 전용 모드(Sodium · Iris · Oculus · Embeddium 같은 화면 모드)를 꺼 보기', 'error');
+      return;
+    }
+    const meta = await inspectCached(path.join(modsDir, hit.file)).catch(() => null);
+    const name = (meta && meta.name) || hit.file.replace(/\.jar$/i, '');
+    this.log(id, `원인 모드: ${name} (${hit.file})`, 'error');
+    this.emit('alert', {
+      serverId: id,
+      id: `client-mod-${Date.now()}`,
+      severity: 'error',
+      title: '화면 전용 모드 때문에 서버가 멈춤',
+      message: `"${name}" (${hit.file}) 이 서버에는 없는 화면 코드(${missing})를 불러서 멈춤 → 접속하는 쪽에서만 쓰는 모드. 서버에서는 끄고, 접속하는 쪽에는 그대로 둬도 됨`,
+      actions: [
+        { id: 'disable-mod', label: '이 모드 끄고 다시 켜기', payload: { file: hit.file, restart: true } },
+        { id: 'open-tab', label: '모드 목록 보기', payload: { tab: 'addons' } },
+      ],
+    });
   }
 
   /** 저장 후 정지. timeout 안에 안 꺼지면 그때만 강제 종료한다. */
@@ -1150,6 +1183,11 @@ class ServerManager extends EventEmitter {
 
   async installByName(id, name, onProgress, kind = null) {
     const server = Servers.get(id);
+    // Fabric API 는 Fabric 서버용. Forge·NeoForge 서버에서 이 이름으로 찾으면 대체판(Forgified Fabric API)이 깔려
+    // 접속하는 쪽에 없을 때 "registries with unknown keys" 로 접속이 끊긴다
+    if (['forge', 'neoforge', 'hybrid'].includes(server.type) && /^fabric(?:[-_ ]?api|[-_].*)?$/i.test(String(name).trim())) {
+      throw new Error(`"${name}" 는 Fabric 서버용 — 이 서버에는 넣지 않음`);
+    }
     const view = modrinth.asKind(server, kind);
     const hit = await modrinth.installByName(view, this.dir(id), name, onProgress);
     if (server.type === 'hybrid') for (const a of hit.installed) a.kind = view.hybridKind;
@@ -1192,7 +1230,9 @@ class ServerManager extends EventEmitter {
       list.push(...items);
     }
     const enabled = list.filter((a) => a.enabled);
-    for (const a of list) a.missing = a.meta ? addonMeta.missingDependencies(a.meta, enabled) : [];
+    // 이 서버에서 돌지 않는 파일(다른 로더용)의 의존성은 보지 않는다 — 예) NeoForge 서버의 Fabric 전용 jar 가 "fabric-api 필요"를 띄워
+    // 서버에만 Forgified Fabric API 가 깔리면 접속하는 쪽과 등록 목록이 달라 접속이 끊긴다
+    for (const a of list) a.missing = a.meta && !(a.compat && a.compat.wrongType) ? addonMeta.missingDependencies(a.meta, enabled) : [];
     return list;
   }
 
