@@ -839,7 +839,8 @@
     // 렌즈 중심은 마우스 반대쪽으로 조금. R은 바깥으로, B는 안쪽으로
     const cx = w * (0.5 - cur.x * 0.025);
     const cy = h * (0.5 - cur.y * 0.025);
-    const ks = 0.01 + 0.004 * (Math.abs(cur.x) + Math.abs(cur.y));
+    // 구동·종료 중에는 가장자리 색 갈라짐을 키우고, 구동이 끝나면 천천히 원래대로 (fxBoost: 0~1)
+    const ks = 0.01 + 0.004 * (Math.abs(cur.x) + Math.abs(cur.y)) + 0.012 * fxBoost;
     const og = fx.out.g;
     og.globalCompositeOperation = 'source-over';
     og.clearRect(0, 0, w, h);
@@ -855,10 +856,11 @@
     mg.clearRect(0, 0, w, h);
     mg.setTransform(1, 0, 0, h / w, 0, 0);
     const rg = mg.createRadialGradient(cx, (cy * w) / h, 0, cx, (cy * w) / h, w * 0.66);
+    const mb = 0.12 * fxBoost; // 키울수록 가림판이 안쪽까지 들어온다
     rg.addColorStop(0, 'rgba(0,0,0,0)');
-    rg.addColorStop(0.58, 'rgba(0,0,0,0)');
-    rg.addColorStop(0.74, 'rgba(0,0,0,0.35)');
-    rg.addColorStop(0.88, 'rgba(0,0,0,0.8)');
+    rg.addColorStop(0.58 - mb, 'rgba(0,0,0,0)');
+    rg.addColorStop(0.74 - mb, 'rgba(0,0,0,0.35)');
+    rg.addColorStop(0.88 - mb * 0.6, 'rgba(0,0,0,0.8)');
     rg.addColorStop(1, 'rgba(0,0,0,1)');
     mg.fillStyle = rg;
     mg.fillRect(0, 0, w, w);
@@ -1311,12 +1313,22 @@
   }
 
   /* ── 전원 상태: on(켜짐) / boot·up(켜지는 중) / down(꺼지는 중) / off(꺼짐, 로딩 화면) ── */
-  const power = { phase: 'off', t0: 0, spec: null };
+  const power = { phase: 'off', t0: 0, spec: null, onAt: 0 };
   function setPower(phase, spec) {
     power.phase = phase;
     power.t0 = performance.now();
     power.spec = spec;
     dirty = true;
+  }
+  /* 가장자리 색수차를 얼마나 키울지 (0~1). 구동 중에는 크게, 구동이 끝나면 천천히 줄이고, 종료가 시작되면 천천히 키운다 */
+  const FX_FADE_OUT = 2400;
+  const FX_FADE_IN = 900;
+  let fxBoost = 0;
+  function boostAt(now) {
+    if (power.phase === 'boot' || power.phase === 'up') return 1;
+    if (power.phase === 'down') return easeIO(clamp01((now - power.t0) / FX_FADE_IN));
+    if (power.phase === 'on' && power.onAt) return 1 - easeIO(clamp01((now - power.onAt) / FX_FADE_OUT));
+    return 0;
   }
   function drawCover(now) {
     const sp = power.spec;
@@ -2078,11 +2090,15 @@
       root.style.setProperty('--py', cur.y.toFixed(4));
     }
     const now = performance.now();
-    const animating = power.phase !== 'on' || tr.live || wave.on || LD.on;
+    fxBoost = boostAt(now);
+    const animating = power.phase !== 'on' || tr.live || wave.on || LD.on || fxBoost > 0;
     if (!dirty && !animating) return;
     dirty = false;
     if (tr.live) stepTransition(now);
-    if ((power.phase === 'boot' || power.phase === 'up') && now - power.t0 > power.spec.end + 50) power.phase = 'on';
+    if ((power.phase === 'boot' || power.phase === 'up') && now - power.t0 > power.spec.end + 50) {
+      power.phase = 'on';
+      power.onAt = now;
+    }
     if (power.phase === 'down' && now - power.t0 > power.spec.last + power.spec.dur + 60) {
       power.phase = 'black';
       if (power.spec.done) power.spec.done();
