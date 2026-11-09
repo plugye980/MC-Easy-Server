@@ -104,15 +104,17 @@
     setInterval(autoCheck, 60 * 1000);
     await booting;
     uiIn(faulty ? 'glitch' : 'clean');
+    setTimeout(() => root.classList.add('is-ready'), 1200);
   }
 
-  /* ---------- 화면 전환 ----------
-     UI가 글리치하며 사라지고 → 패널이 꺼지고 → 꺼진 패널 화면에 로딩 화면 → 패널이 다시 켜지며 → 새 페이지가 나타난다 */
+  /* ---------- 화면 전환 (PR-SCRF와 같은 구조) ----------
+     UI가 흐려지며 사라짐 → 배경 패널이 새 배치로 재정렬 → 새 UI가 흐림이 걷히며 나타남.
+     글리치 등장은 처음 구동 때만. 서버를 만들 때만 그 사이에 로딩 화면이 들어간다(패널이 칸마다 로딩 화면으로 넘어갔다가 돌아온다). */
   const root = document.documentElement;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   let busy = false;
   let loaderHook = null;
-  function uiIn(kind = 'clean') {
+  function uiIn(kind = 'soft') {
     root.dataset.glitch = kind;
     root.dataset.ui = 'off';
     void document.body.offsetWidth;
@@ -120,70 +122,57 @@
   }
   async function uiOut() {
     root.dataset.ui = 'out';
-    await sleep(800);
+    await sleep(650);
     root.dataset.ui = 'off';
   }
-  /** 로딩 화면을 띄운 채 일을 한다. tasks: [[문구, 비율]], work: 실제 작업, progressKey: 진행 이벤트 키 */
-  async function runLoad({ cap, status, tasks, total = 1800, work, progressKey }) {
+  const layoutOf = () => (state.page === 'server' ? 'server' : 'home');
+  /** 화면 바꾸기: setup()으로 상태를 바꾸고, 배경을 재정렬한 뒤 새 UI를 띄운다 */
+  async function goto(setup) {
+    if (busy) return;
+    busy = true;
     await uiOut();
-    if (!window.Scene) return work ? work() : undefined;
-    await window.Scene.powerDown();
-    const ld = window.Scene.loader({ cap, status, task: tasks ? tasks[0][0] : '준비 중' });
+    setup();
+    render();
+    if (window.Scene) await window.Scene.arrange(layoutOf());
+    uiIn('soft');
+    busy = false;
+  }
+  /** 로딩 화면을 띄운 채 일을 한다 — 만들기 · 가져오기. 끝나면 새 배치의 배경으로 넘어오고 setup으로 화면을 정한다 */
+  async function runLoad({ cap, status, mark, work, progressKey }) {
+    root.classList.add('is-loading');
+    await uiOut();
+    if (!window.Scene) return work();
+    const ld = await window.Scene.toLoader({ cap, status, mark, task: '준비 중' });
     if (progressKey) loaderHook = { key: progressKey, fn: (p) => ld.progress(p.percent, p.text) };
     let result;
-    const job = (async () => {
-      if (tasks) {
-        let acc = 0;
-        for (const [label, w] of tasks) {
-          ld.progress(acc, label);
-          await sleep(total * w);
-          acc += w;
-          ld.progress(acc);
-        }
-      }
-      if (work) result = await work();
-    })();
     // 로고가 다 그려질 시간은 항상 보장해 연출이 끊기지 않게 한다
-    await Promise.all([job, sleep(2300)]);
+    await Promise.all([(async () => (result = await work()))(), sleep(2300)]);
     loaderHook = null;
     await ld.finish();
     return result;
   }
-  async function showPage(setup) {
+  async function leaveLoader(setup) {
     setup();
     render();
-    if (window.Scene) await window.Scene.powerUp();
-    uiIn('clean');
+    if (window.Scene) await window.Scene.fromLoader(layoutOf());
+    root.classList.remove('is-loading');
+    uiIn('soft');
   }
-  /** 서버 목록에서 고르면: 로딩 → 그 서버 페이지 */
-  async function openServer(id) {
-    if (busy) return;
-    const s = state.servers.find((x) => x.id === id);
-    if (!s) return;
-    busy = true;
-    const nn = String(state.servers.indexOf(s) + 1).padStart(2, '0');
-    await runLoad({
-      cap: `MCES · SV-${nn} · ${TYPE[s.type].sub.toUpperCase()}`,
-      status: `${s.name} 여는 중`,
-      tasks: [['단말 연결 중', 0.25], ['서버 정보 불러오는 중', 0.3], ['콘솔 연결 중', 0.25], ['상태 점검 중', 0.2]],
-    });
-    await showPage(() => {
+  /** 서버 목록에서 고르면: 배경 재정렬 → 그 서버 페이지 (이미 만든 서버는 로딩 없이) */
+  function openServer(id) {
+    if (!state.servers.find((x) => x.id === id)) return;
+    goto(() => {
       state.page = 'server';
       state.selected = id;
       state.tab = 'overview';
     });
-    busy = false;
   }
   /** 서버 페이지의 뒤로 나가기 → 만들기 페이지 */
-  async function goHome() {
-    if (busy) return;
-    busy = true;
-    await uiOut();
-    state.page = 'home';
-    state.selected = null;
-    render();
-    uiIn('clean');
-    busy = false;
+  function goHome() {
+    goto(() => {
+      state.page = 'home';
+      state.selected = null;
+    });
   }
 
   function applyTheme(theme) {
@@ -309,6 +298,14 @@
             h('span.create-go-text', null, importing ? '서버 가져오기' : '서버 만들기'),
             h('span.create-go-line'),
           ),
+          live.eula
+            ? h(
+                'div.eula-line',
+                null,
+                checkbox(live.eula.get(), (v) => live.eula.set(v), '마인크래프트 이용 약관(EULA) 동의'),
+                h('button.eula-read', { type: 'button', onclick: () => call('app:openExternal', 'https://aka.ms/MinecraftEULA') }, '약관 읽기'),
+              )
+            : null,
         ),
         h(
           'section.home-list',
@@ -330,7 +327,7 @@
       );
     }
     put($('#paneFoot'),
-      h('span.foot-code', null, 'MCES · SCRF/SECTOR A'),
+      h('span.foot-code', null, 'MCES · SERVER TERMINAL'),
       seg(
         [
           { value: 'light', label: '밝게' },
@@ -338,7 +335,10 @@
         ],
         state.settings.theme,
         async (theme) => {
-          applyTheme(theme);
+          // 패널 새로 고침 — 테마 버튼 자리에서 충격파가 퍼지며 지나간 칸이 새 색으로 바뀐다
+          const at = $('#paneFoot .seg').getBoundingClientRect();
+          if (window.Scene) window.Scene.refresh(at.left + at.width / 2, at.top + at.height / 2, () => applyTheme(theme));
+          else applyTheme(theme);
           state.settings = (await call('app:setSettings', { theme })) || state.settings;
           if (live.updateMetrics) live.updateMetrics();
         },
@@ -410,8 +410,8 @@
     const startBar = progressBar(0);
     const startLabel = h('span.note');
     trackProgress(startKey, startBar, startLabel);
+    void st;
     put(live.head,
-      h('span.chip', null, dot(st.dot), st.label),
       h('h1.card-title', { title: s.name }, s.name),
       h('p.card-code', null, h('span', null, `SV-${String(state.servers.indexOf(s) + 1).padStart(2, '0')}`), h('span', null, `${TYPE[s.type].sub}${s.build ? ` #${s.build}` : ''}`), h('span', null, s.version), h('span', null, `:${s.port}`)),
     );
@@ -1662,6 +1662,13 @@
       btn.title = !c.eula ? 'EULA 동의 필요' : !c.version ? '버전 선택 필요' : '';
     };
     live.refreshCreate = refreshCreate;
+    live.eula = {
+      get: () => c.eula,
+      set: (v) => {
+        c.eula = v;
+        refreshCreate();
+      },
+    };
 
     const loadVersions = async () => {
       put(versionBox, h('span.note', null, '버전 목록을 불러오는 중…'));
@@ -1789,6 +1796,7 @@
       const s = await runLoad({
         cap: `MCES · SV-NEW · ${TYPE[c.type].sub.toUpperCase()} ${c.version}`,
         status: `${c.name.trim()} 만드는 중`,
+        mark: c.type,
         progressKey: 'create',
         work: () => call('servers:create', { type: c.type, version: c.version, name: c.name.trim(), memoryMb: c.memoryMb, optimize: c.optimize, eula: c.eula, settings: c.settings, world: c.world }, 'create'),
       });
@@ -1798,13 +1806,13 @@
         if (!state.servers.find((x) => x.id === s.id)) state.servers.push(s);
         state.javaInstalled = (await call('java:installed')) || state.javaInstalled;
         toast(`${s.name} 생성 완료`, { kind: 'ok', timeout: 6000 });
-        await showPage(() => {
+        await leaveLoader(() => {
           state.page = 'server';
           state.selected = s.id;
           state.tab = 'overview';
         });
       } else {
-        await showPage(() => {
+        await leaveLoader(() => {
           state.page = 'home';
         });
       }
@@ -1853,16 +1861,6 @@
         ),
 
         worldCard,
-
-        h(
-          'div.card.eula',
-          null,
-          checkbox(c.eula, (v) => {
-            c.eula = v;
-            refreshCreate();
-          }, '마인크래프트 이용 약관(EULA) 동의 — 서버 실행에 필수'),
-          button('약관 읽기', () => call('app:openExternal', 'https://aka.ms/MinecraftEULA'), { small: true, kind: 'ghost' }),
-        ),
 
         progressBox,
         h('div.create-bar', null, h('span.note', null, '서버와 Java는 모두 앱 폴더 안에 생성 · 왼쪽 위 "서버 만들기"로 시작')),
@@ -1959,6 +1957,7 @@
       const s = await runLoad({
         cap: `MCES · SV-NEW · IMPORT`,
         status: `${g.name.trim()} 가져오는 중`,
+        mark: (g.det && g.det.type) || 'paper',
         progressKey: 'import',
         work: () => call('servers:import', { path: g.det.path, mode: g.mode, name: g.name.trim(), memoryMb: g.memoryMb, optimize: g.optimize, eula: g.eula }, 'import'),
       });
@@ -1969,13 +1968,13 @@
         if (!state.servers.find((x) => x.id === s.id)) state.servers.push(s);
         state.javaInstalled = (await call('java:installed')) || state.javaInstalled;
         toast(`${s.name} 가져오기 완료`, { kind: 'ok', timeout: 6000 });
-        await showPage(() => {
+        await leaveLoader(() => {
           state.page = 'server';
           state.selected = s.id;
           state.tab = 'overview';
         });
       } else {
-        await showPage(() => {
+        await leaveLoader(() => {
           state.page = 'home';
         });
       }
@@ -2017,22 +2016,25 @@
         const b2 = $('#createGo');
         if (b2) b2.disabled = !ok || g.busy || !(g.eula || (d && d.eula));
       };
+      // 이 폴더에 동의 기록이 없을 때만 왼쪽 위에 EULA 동의를 띄운다
+      const wantEula = ok && !d.eula;
+      if (!!live.eula !== wantEula) {
+        live.eula = wantEula
+          ? {
+              get: () => g.eula,
+              set: (v) => {
+                g.eula = v;
+                live.refreshCreate();
+              },
+            }
+          : null;
+        renderSide();
+      }
       put(
         body,
         folderCard(),
         d && d.problems.length ? h('div.card', null, h('div.card-head', null, h('h2', null, '가져올 수 없음')), h('div.stack', { style: { gap: '4px' } }, d.problems.map((p) => h('span.note.bad', null, p)))) : null,
         ok ? h('div.grid.grid-2', null, detectedCard(d), optionsCard(d)) : null,
-        ok && !d.eula
-          ? h(
-              'div.card.eula',
-              null,
-              checkbox(g.eula, (v) => {
-                g.eula = v;
-                draw();
-              }, '마인크래프트 이용 약관(EULA) 동의 — 이 서버 폴더에는 아직 동의 기록 없음'),
-              button('약관 읽기', () => call('app:openExternal', 'https://aka.ms/MinecraftEULA'), { small: true, kind: 'ghost' }),
-            )
-          : null,
         progressBox,
         ok ? h('div.create-bar', null, h('span.note', null, '월드 · 플러그인 · 설정 파일은 그대로 유지 · 왼쪽 위 "서버 가져오기"로 시작')) : null,
       );

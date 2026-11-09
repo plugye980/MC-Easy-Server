@@ -138,24 +138,53 @@
     if (y0 + (rows.top + 1) * TH - yt < TH * 0.5) rows.top += 1;
     if (yb - (y0 + rows.bottom * TH) < TH * 0.5) rows.bottom -= 1;
     cols = { left: Math.floor((xl - x0) / (S / 2)), right: Math.floor((xr - x0) / (S / 2)) };
+    // 띠의 왼쪽·오른쪽 끝 (글자 자리를 정할 때 쓴다)
+    bandLeft = cols.left + (mod2(rows.top + cols.left) !== 1 ? -1 : 0) + BAND_FROM_LEFT;
+    bandRight = cols.right + (mod2(rows.top + cols.right) !== 0 ? 1 : 0) + LAYOUT[1].cells[0][1];
+    tiles = layoutMap(curLayout);
+  }
+
+  /* 서버 페이지 배치 — 위쪽 띠와 왼쪽 계단(로고 자리)은 그대로 두고,
+     양쪽에서 아래 가운데로 모이는 꺼진 사선 띠와, 아래 가운데에 켜진 큰 삼각형.
+     사선 띠는 화면 가운데 기준: 왼쪽은 c − r', 오른쪽은 c + r' 값의 범위(r'은 맨 아랫줄에서 센 줄) */
+  const BANDS_L = [[-15, -12], [-8, -6]];
+  const BANDS_R = [[6, 8], [12, 15]];
+  const inBands = (v, list) => list.some(([a, b]) => v >= a && v <= b);
+  let curLayout = 'home';
+  function layoutMap(name) {
     const out = {};
-    for (const grp of LAYOUT) {
+    const put = (r, c, st) => {
+      const f = fromC(r, c);
+      out[`${r},${f.k},${f.t}`] = { r, k: f.k, t: f.t, z: st > 0 ? ON : OFF };
+    };
+    const groups = name === 'server' ? LAYOUT.slice(0, 1) : LAYOUT;
+    for (const grp of groups) {
       const rA = grp.row === 'T' ? rows.top : rows.bottom;
       let cA = grp.side === 'L' ? cols.left : cols.right;
       if (mod2(rA + cA) !== grp.par) cA += grp.side === 'L' ? -1 : 1;
       for (const [dr, c0, c1, st] of grp.cells) {
         const r = rA + dr;
         const to = c1 === null ? cols.right + 3 : cA + c1;
-        for (let c = cA + c0; c <= to; c++) {
-          const f = fromC(r, c);
-          out[`${r},${f.k},${f.t}`] = { r, k: f.k, t: f.t, z: st > 0 ? ON : OFF };
-        }
+        for (let c = cA + c0; c <= to; c++) put(r, c, st);
       }
     }
-    // 띠의 왼쪽·오른쪽 끝 (글자 자리를 정할 때 쓴다)
-    bandLeft = cols.left + (mod2(rows.top + cols.left) !== 1 ? -1 : 0) + BAND_FROM_LEFT;
-    bandRight = cols.right + (mod2(rows.top + cols.right) !== 0 ? 1 : 0) + LAYOUT[1].cells[0][1];
-    tiles = out;
+    if (name === 'server') {
+      const rb = rows.bottom;
+      for (let r = rows.top + 2; r <= rb + 1; r++) {
+        const rr = r - rb;
+        for (let c = cols.left - 3; c <= cols.right + 3; c++) {
+          const f = fromC(r, c);
+          if (out[`${r},${f.k},${f.t}`]) continue;
+          if (c < 0 ? inBands(c - rr, BANDS_L) : inBands(c + rr, BANDS_R)) put(r, c, -1);
+        }
+      }
+      // 아래 가운데의 켜진 큰 삼각형 (작은 칸 9개, 꼭짓점이 위)
+      const sft = mod2(rb - 2);
+      [[rb - 2, 0], [rb - 1, 1], [rb, 2]].forEach(([r, w]) => {
+        for (let c = sft - w; c <= sft + w; c++) put(r, c, 1);
+      });
+    }
+    return out;
   }
 
   /* ════════════ 투영 ════════════ */
@@ -494,7 +523,10 @@
     g.setTransform(Q, 0, 0, Q, 0, 0);
     g.filter = `blur(${14 * Q}px)`;
     g.beginPath();
-    for (const t of up) gTri(g, t.T.map((p) => [p[0] + 4, p[1] + 16]));
+    for (const t of up) {
+      const a = Math.min(1.4, t.z / ON);
+      gTri(g, t.T.map((p) => [p[0] + 4 * a, p[1] + 16 * a]));
+    }
     g.fillStyle = P.shadow;
     g.fill();
 
@@ -1117,12 +1149,12 @@
     logTimers.forEach(clearTimeout);
     logTimers = [];
     logLines = [];
-    log('C:\\MCES> connect --host SCRF --sector A');
-    const conn = log('Connecting to SCRF', 'is-live');
+    log('C:\\MCES> link --host CORE --port 0x3F7A');
+    const conn = log('Connecting to CORE', 'is-live');
     let dots = 0;
     const dotTimer = setInterval(() => {
       dots = (dots + 1) % 4;
-      conn.text = `Connecting to SCRF${'.'.repeat(dots)}`;
+      conn.text = `Connecting to CORE${'.'.repeat(dots)}`;
     }, 320);
     const span = sp.last + sp.dur - sp.start;
     const plan = [
@@ -1151,9 +1183,9 @@
           if (it[1] === 'dump') return log([hex4(), hex4(), hex4(), hex4(), hex4(), hex4()].join(' '), 'is-dim');
           if (it[1] === 'done') {
             clearInterval(dotTimer);
-            conn.text = 'Connecting to SCRF... OK';
+            conn.text = 'Connecting to CORE... OK';
             conn.cls = '';
-            log('[DONE] connection established  — SCRF online', 'is-done');
+            log('[DONE] connection established  — CORE online', 'is-done');
             log('C:\\MCES> _');
             return null;
           }
@@ -1432,6 +1464,23 @@
     g.addColorStop(1, 'rgba(226, 180, 90, 0)');
     return g;
   }
+  // 표시 조각 — 120 칸 안, 가운데(60, 60), 궤도 반지름 40
+  const sq = (x, y, w, h) => [[x, y], [x + w, y], [x + w, y + h], [x, y + h]];
+  const arcPts = (cx2, cy2, r, a0, a1) => {
+    const out = [];
+    for (let i = 0; i <= 16; i++) {
+      const a = a0 + ((a1 - a0) * i) / 16;
+      out.push([cx2 + r * Math.cos(a), cy2 + r * Math.sin(a)]);
+    }
+    return out;
+  };
+  function markPieces(type) {
+    if (type === 'vanilla') return [0, 1, 2].map((i) => ({ pts: arcPts(60, 60, 21, -Math.PI / 2 + (i * 2 * Math.PI) / 3, -Math.PI / 2 + ((i + 1) * 2 * Math.PI) / 3), closed: false, w: 6 }));
+    if (type === 'hybrid') return [{ pts: sq(38, 38, 19, 44), closed: true, w: 5 }, { pts: sq(63, 38, 19, 19), closed: true, w: 5 }, { pts: sq(63, 63, 19, 19), closed: true, w: 5 }];
+    if (type === 'forge' || type === 'neoforge' || type === 'fabric' || type === 'mod') return [sq(38, 38, 19, 19), sq(63, 38, 19, 19), sq(38, 63, 19, 19), sq(63, 63, 19, 19)].map((pts) => ({ pts, closed: true, w: 5 }));
+    const b = [[37, 37], [83, 37], [83, 83], [37, 83]];
+    return [0, 1, 2, 3].map((i) => ({ pts: [b[i], b[(i + 1) % 4]], closed: false, w: 7 }));
+  }
   function drawLoader(now) {
     const u = 1 / k;
     const t = now - LD.t0;
@@ -1443,8 +1492,12 @@
     const cx = W / 2;
     const cy = H * 0.44;
     const panel = Math.min(240, innerWidth * 0.58) * u;
-    LD.shown += (LD.target - LD.shown) * 0.12;
-    if (Math.abs(LD.target - LD.shown) < 0.2) LD.shown = LD.target;
+    // 진행 막대는 받은 진행을 따라가되 한 번에 뛰지 않는다. 진행 소식이 한동안 없으면 92%까지 아주 천천히 차오른다
+    const dt = Math.min(80, now - (LD.lastFrame || now));
+    LD.lastFrame = now;
+    if (!LD.finishing && now - LD.lastEvt > 700 && LD.target < 92) LD.target = Math.min(92, LD.target + (dt * 0.0035 * (100 - LD.target)) / 10);
+    const gap = LD.target - LD.shown;
+    if (gap > 0) LD.shown += Math.min(gap, Math.max(gap * dt * 0.004, dt * 0.012), dt * 0.06);
 
     // 바탕: 가운데 빛, 신성 기하학, 떠오르는 빛 알갱이, 아래로 가라앉는 바닥
     const bgA = inA * outBg;
@@ -1557,30 +1610,25 @@
         ctx.shadowColor = 'rgba(226, 180, 90, 0.7)';
         ctx.stroke();
       }
-      const segs = [[[25.36, 80], [60, 20], 450], [[60, 20], [94.64, 80], 800], [[94.64, 80], [25.36, 80], 1150]];
+      // 조각마다 글리치하며 그려진다 — 서버 종류의 표시(플러그인 네모 · 모드 네 칸 · 바닐라 원 · 하이브리드 네모+두 칸)
       ctx.shadowColor = 'rgba(91, 120, 255, 0.9)';
-      for (const [a, b, d] of segs) {
-        const st = lt - d;
-        if (st <= 0) continue;
+      markPieces(LD.mark).forEach((pc, i) => {
+        const st = lt - (450 + i * 300);
+        if (st <= 0) return;
         const p = ease(st / 420);
-        // 글리치: 0.55초 동안 계단식으로 흔들리며 깜빡인다
         const gp = st / 550;
         const jx = gp < 0.12 ? -5 : gp < 0.24 ? 4 : gp < 0.36 ? -2 : 0;
         const ga = gp < 0.12 ? 0.2 : gp < 0.24 ? 1 : gp < 0.36 ? 0.35 : gp < 0.58 ? 1 : gp < 0.66 ? 0.55 : 1;
         ctx.globalAlpha = logoA * ga;
+        ctx.save();
+        ctx.translate(jx, 0);
         ctx.beginPath();
-        ctx.moveTo(a[0] + jx, a[1]);
-        ctx.lineTo(a[0] + jx + (b[0] - a[0]) * p, a[1] + (b[1] - a[1]) * p);
+        partial(ctx, pc.pts, p, pc.closed);
         ctx.strokeStyle = '#8fa8ff';
-        ctx.lineWidth = 7.5;
+        ctx.lineWidth = pc.w;
         ctx.stroke();
-      }
-      ctx.globalAlpha = logoA * clamp01((lt - 1500) / 600);
-      ctx.beginPath();
-      ctx.arc(60, 60, 3.6, 0, Math.PI * 2);
-      ctx.fillStyle = '#e2b45a';
-      ctx.shadowColor = 'rgba(226, 180, 90, 0.9)';
-      ctx.fill();
+        ctx.restore();
+      });
       ctx.restore();
     }
 
@@ -1635,10 +1683,10 @@
       ctx.strokeRect(-4.5 * u, -4.5 * u, 9 * u, 9 * u);
       ctx.restore();
       ctx.globalAlpha = cA;
-      // 진행 막대 — 3px
-      const rw = Math.min(192, innerWidth * 0.52) * u;
+      // 진행 막대 — 3px, 숫자 없이
+      const rw = Math.min(220, innerWidth * 0.52) * u;
       const ry = top + 84 * u;
-      const rx = cx - rw / 2 - 18 * u;
+      const rx = cx - rw / 2;
       ctx.fillStyle = 'rgba(120, 150, 180, 0.22)';
       ctx.fillRect(rx, ry - 1.5 * u, rw, 3 * u);
       const fg = ctx.createLinearGradient(rx, 0, rx + rw, 0);
@@ -1646,13 +1694,149 @@
       fg.addColorStop(1, '#8fa8ff');
       ctx.fillStyle = fg;
       ctx.fillRect(rx, ry - 1.5 * u, (rw * LD.shown) / 100, 3 * u);
-      set(600, 13, MONO_F);
-      ctx.textAlign = 'left';
-      ctx.fillStyle = '#8fa8ff';
-      ctx.fillText(String(Math.round(LD.shown)).padStart(3, ' '), rx + rw + 12 * u, ry);
       ctx.restore();
     }
   }
+  /* ════════════ 배경 재정렬 (PR-SCRF transitionTo) ════════════
+     패널이 가운데에서 바깥으로, 불규칙한 묶음으로 새 높이로 바뀐다. 크게 바뀌는 칸(꺼짐↔켜짐)은 한 번 대기를 거친다. */
+  const TR_SPAN = 2200;
+  const TR_DUR = 650;
+  const easeIO = (p) => (p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2);
+  const tr = { live: false, t0: 0, end: 0, done: null };
+  function transitionTo(name, lead = 0) {
+    curLayout = name;
+    const want = layoutMap(name);
+    for (const key of Object.keys(want)) if (!tiles[key]) tiles[key] = { ...want[key], z: 0 };
+    const diag = Math.hypot(W / 2, H / 2);
+    let last = 0;
+    for (const key of Object.keys(tiles)) {
+      const t = tiles[key];
+      const c = centroid(tri(t.r, t.k, t.t));
+      t.from = t.z;
+      t.to = want[key] ? want[key].z : 0;
+      const grp = groupOf(t.r, t.k, t.t === 'u' ? 1 : 0, c);
+      const dist = Math.min(1, Math.hypot(c[0] - W / 2, c[1] - H / 2) / diag);
+      t.delay = t.from === t.to ? 0 : lead + (dist * 0.55 + grp.h * 0.45) * TR_SPAN;
+      t.dur = TR_DUR;
+      t.via0 = (t.from > 0 && t.to < 0) || (t.from < 0 && t.to > 0);
+      if (t.from !== t.to) last = Math.max(last, t.delay + t.dur);
+    }
+    tr.live = true;
+    tr.t0 = performance.now();
+    tr.end = last + 120;
+    dirty = true;
+    return new Promise((res) => (tr.done = res));
+  }
+  function stepTransition(now) {
+    const tt = now - tr.t0;
+    for (const key of Object.keys(tiles)) {
+      const t = tiles[key];
+      if (t.from === undefined) continue;
+      const p = Math.max(0, Math.min(1, (tt - t.delay) / t.dur));
+      const e = easeIO(p);
+      t.z = t.via0 ? (e < 0.5 ? t.from * (1 - e * 2) : t.to * (e * 2 - 1)) : t.from + (t.to - t.from) * e;
+      if (p >= 1 && t.to === 0) delete tiles[key];
+    }
+    buildCache();
+    if (tt > tr.end) {
+      tr.live = false;
+      for (const t of Object.values(tiles)) delete t.from;
+      const cb = tr.done;
+      tr.done = null;
+      if (cb) cb();
+    }
+  }
+
+  /* ════════════ 패널 화면 전환 — 꺼지지 않고, 칸마다 채널이 바뀌듯 로딩 화면으로 넘어간다 ════════════ */
+  const ldSnap = document.createElement('canvas');
+  const ldSnapG = ldSnap.getContext('2d');
+  const sw = { dir: 'in', t0: 0, span: 1100, dur: 420, done: null };
+  const shapeOf = (r, kk, tt, T) => {
+    const tile = tiles[`${r},${kk},${tt}`];
+    return tile && tile.z > 0 ? convexHull(T.concat(T.map((p) => project(p, tile.z)))) : T;
+  };
+  const addShape = (path, shape) => {
+    path.moveTo(shape[0][0], shape[0][1]);
+    for (let i = 1; i < shape.length; i++) path.lineTo(shape[i][0], shape[i][1]);
+    path.closePath();
+  };
+  function eachCell(fn) {
+    const rMin = Math.floor(-y0 / TH) - 2;
+    const rMax = Math.ceil((H - y0) / TH) + 2;
+    for (let r = rMin; r <= rMax; r++) {
+      const o = x0 + ox(r);
+      const kMin = Math.floor(-o / S) - 2;
+      const kMax = Math.ceil((W - o) / S) + 2;
+      for (let kk = kMin; kk <= kMax; kk++) for (let j = 0; j < 2; j++) fn(r, kk, j ? 'u' : 'd', j);
+    }
+  }
+  function compositeSwitch(now) {
+    const t = now - sw.t0;
+    const diag = Math.hypot(W / 2, H / 2);
+    const bins = [new Path2D(), new Path2D(), new Path2D(), new Path2D()];
+    const levels = [1, 0.72, 0.42, 0.16];
+    const flash = new Path2D();
+    eachCell((r, kk, tt, j) => {
+      const T = tri(r, kk, tt);
+      const c = centroid(T);
+      const dist = Math.min(1, Math.hypot(c[0] - W / 2, c[1] - H / 2) / diag);
+      const grp = groupOf(r, kk, j, c);
+      const u = (t - (dist * 0.55 + grp.h * 0.45) * sw.span) / sw.dur;
+      const e = easeIO(clamp01(u));
+      const a = sw.dir === 'in' ? e : 1 - e;
+      const shape = shapeOf(r, kk, tt, T);
+      if (a > 0.05) addShape(bins[a > 0.9 ? 0 : a > 0.6 ? 1 : a > 0.3 ? 2 : 3], shape);
+      if (u > 0.25 && u < 0.7) addShape(flash, shape);
+    });
+    bins.forEach((path, i) => {
+      ctx.save();
+      ctx.clip(path);
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.globalAlpha = levels[i];
+      ctx.drawImage(ldSnap, 0, 0);
+      ctx.restore();
+    });
+    ctx.fillStyle = 'rgba(225, 242, 255, 0.22)';
+    ctx.fill(flash);
+    if (t > sw.span + sw.dur + 40) {
+      power.phase = sw.dir === 'in' ? 'off' : 'on';
+      const cb = sw.done;
+      sw.done = null;
+      if (cb) cb();
+    }
+  }
+
+  /* ════════════ 새로 고침 — 누른 자리에서 충격파가 퍼지며, 지나간 칸이 새 화면으로 바뀐다 (테마 전환) ════════════ */
+  const oldSnap = document.createElement('canvas');
+  const oldSnapG = oldSnap.getContext('2d');
+  const wave = { on: false, t0: 0, o: [0, 0], v: 1.5 };
+  function drawRefresh(now) {
+    const R = (now - wave.t0) * wave.v;
+    const old = new Path2D();
+    const front = new Path2D();
+    let pending = false;
+    eachCell((r, kk, tt, j) => {
+      const T = tri(r, kk, tt);
+      const c = centroid(T);
+      const d = Math.hypot(c[0] - wave.o[0], c[1] - wave.o[1]) + groupOf(r, kk, j, c).h * 90;
+      const shape = shapeOf(r, kk, tt, T);
+      if (d > R) {
+        addShape(old, shape);
+        pending = true;
+      } else if (d > R - 150) addShape(front, shape);
+    });
+    ctx.save();
+    ctx.setTransform(D, 0, 0, D, 0, 0);
+    ctx.clip(old);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.drawImage(oldSnap, 0, 0);
+    ctx.restore();
+    ctx.setTransform(D, 0, 0, D, 0, 0);
+    ctx.fillStyle = 'rgba(225, 242, 255, 0.28)';
+    ctx.fill(front);
+    if (!pending && R > 200) wave.on = false;
+  }
+
   // 꺼진 화면 — 패널 사이 이음매, 그 위에 로딩 화면, 옅은 주사선
   function drawOff(now) {
     ctx.setTransform(D, 0, 0, D, 0, 0);
@@ -1701,16 +1885,33 @@
       root.style.setProperty('--py', cur.y.toFixed(4));
     }
     const now = performance.now();
-    const animating = power.phase !== 'on';
+    const animating = power.phase !== 'on' || tr.live || wave.on || LD.on;
     if (!dirty && !animating) return;
     dirty = false;
-    if (power.phase === 'down' && now - power.t0 > power.spec.last + power.spec.dur + 60) power.phase = 'off';
+    if (tr.live) stepTransition(now);
     if ((power.phase === 'boot' || power.phase === 'up') && now - power.t0 > power.spec.end + 50) power.phase = 'on';
     if (power.phase === 'off') {
       drawOff(now);
       edgeFX();
       return;
     }
+    if (power.phase === 'switch') {
+      // 로딩 화면을 먼저 그려 사본으로 두고, 배경 위에 칸마다 덮는다
+      drawOff(now);
+      if (ldSnap.width !== canvas.width || ldSnap.height !== canvas.height) {
+        ldSnap.width = canvas.width;
+        ldSnap.height = canvas.height;
+      }
+      ldSnapG.drawImage(canvas, 0, 0);
+    }
+    drawScene();
+    ctx.setTransform(D, 0, 0, D, 0, 0);
+    if (power.phase === 'boot' || power.phase === 'up') drawCover(now);
+    if (power.phase === 'switch') compositeSwitch(now);
+    edgeFX();
+    if (wave.on) drawRefresh(now);
+  }
+  function drawScene() {
     const sunk = [];
     const raised = [];
     for (const t of Object.values(tiles)) {
@@ -1726,9 +1927,6 @@
     ctx.drawImage(cache.ground, 0, 0, W, H);
     drawRaisedPass(raised, walls);
     bloom();
-    ctx.setTransform(D, 0, 0, D, 0, 0);
-    if (power.phase !== 'on') drawCover(now);
-    edgeFX();
   }
 
   /* ════════════ 낟알: 작은 노이즈 그림을 한 번 만들어 깔아 둔다 ════════════ */
@@ -1785,24 +1983,58 @@
       setPower('boot', sp);
       return wait(sp.uiAt);
     },
-    /** 패널이 묶음 단위로 꺼진다 — 가장자리부터 안쪽으로 */
-    powerDown() {
-      setPower('down', { dir: 'off', faults: false, start: 0, last: 520, dur: 420 });
-      return wait(1000);
+    /** 배경 재정렬 — 화면을 바꿀 때 */
+    arrange(name) {
+      return transitionTo(name);
     },
-    /** 꺼진 화면에서 다시 켜진다 — 오류 없이. UI를 띄울 때가 되면 끝난다 */
-    powerUp() {
-      const sp = { dir: 'on', faults: false, start: 80, last: 900, dur: 600 };
-      sp.end = sp.last + sp.dur;
-      setPower('up', sp);
-      return wait(sp.end - 250);
+    /** 칸마다 채널이 바뀌듯 로딩 화면으로 넘어간다. 다 넘어가면 로딩 화면 조작 손잡이를 돌려준다 */
+    toLoader(opts) {
+      const handle = this.loader(opts);
+      sw.dir = 'in';
+      sw.t0 = performance.now();
+      power.phase = 'switch';
+      dirty = true;
+      return new Promise((res) => (sw.done = () => res(handle)));
+    },
+    /** 로딩 화면에서 새 배치의 배경으로 칸마다 넘어온다 */
+    fromLoader(name) {
+      curLayout = name;
+      tiles = layoutMap(name);
+      buildCache();
+      sw.dir = 'out';
+      sw.t0 = performance.now();
+      power.phase = 'switch';
+      dirty = true;
+      return new Promise((res) => {
+        sw.done = () => {
+          LD.on = false;
+          res();
+        };
+      });
+    },
+    /** 새로 고침 — (clientX, clientY)에서 충격파가 퍼지며 지나간 칸이 새 화면으로. apply()가 화면을 바꾼다 */
+    refresh(clientX, clientY, apply) {
+      if (oldSnap.width !== canvas.width || oldSnap.height !== canvas.height) {
+        oldSnap.width = canvas.width;
+        oldSnap.height = canvas.height;
+      }
+      oldSnapG.drawImage(canvas, 0, 0);
+      const cxw = innerWidth / 2 + (clientX - innerWidth / 2) / SCALE;
+      const cyw = innerHeight / 2 + (clientY - innerHeight / 2) / SCALE;
+      apply();
+      rebuild();
+      wave.o = [cxw / k, cyw / k];
+      wave.t0 = performance.now();
+      wave.on = true;
+      dirty = true;
     },
     /** 꺼진 패널 화면에 로딩 화면을 띄운다 */
     loader(opts) {
-      Object.assign(LD, { on: true, t0: performance.now(), cap: opts.cap || 'MCES · SCRF/SECTOR A', status: opts.status || '불러오는 중', task: opts.task || '', taskAt: performance.now(), target: 0, shown: 0, doneAt: 0 });
+      Object.assign(LD, { on: true, t0: performance.now(), cap: opts.cap || 'MCES', status: opts.status || '불러오는 중', task: opts.task || '', taskAt: performance.now(), target: 0, shown: 0, doneAt: 0, mark: opts.mark || 'paper', lastEvt: performance.now(), finishing: false, lastFrame: 0 });
       dirty = true;
       return {
         progress(frac, task) {
+          LD.lastEvt = performance.now();
           if (typeof frac === 'number') LD.target = Math.max(LD.target, Math.max(0, Math.min(1, frac)) * 100);
           if (task && task !== LD.task) {
             LD.task = task;
@@ -1815,10 +2047,12 @@
         /** 로고만 남기고 빠진 뒤 로고도 사라진다 */
         async finish() {
           LD.target = 100;
-          await wait(380);
+          LD.finishing = true;
+          // 막대가 끝까지 차오른 뒤에 끝낸다
+          for (let i = 0; i < 80 && LD.shown < 99.5; i++) await wait(50);
+          await wait(260);
           LD.doneAt = performance.now();
           await wait(1250);
-          LD.on = false;
         },
       };
     },
