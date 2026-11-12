@@ -126,7 +126,7 @@ p { margin: 0; line-height: 1.6; color: var(--ink-2); }
 /* ═══════════ 공간 속의 판 ═══════════ */
 /* 판은 평평하게 둔다 — 3D 로 기울이면 글자(특히 스크롤되는 영역)가 흐려지고 가장자리가 잘린다 */
 .ui { position: fixed; inset: 0; z-index: 2; pointer-events: none; }
-.pane { position: absolute; pointer-events: auto; display: flex; flex-direction: column; min-height: 0; }
+.pane { position: absolute; pointer-events: auto; display: flex; flex-direction: column; min-height: 0; box-shadow: var(--pane-shadow); }
 
 .pane-l {
   left: 6.5vw; top: calc(var(--band-bottom) + 26px); bottom: 7vh;
