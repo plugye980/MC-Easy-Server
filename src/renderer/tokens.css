@@ -1,10 +1,10 @@
 /* MCES 테마 토큰 — SCRF 메인 시스템(PR-SCRF design/tokens.css)에서 가져온 값
    MCES는 SCRF에서 서버 관리 기능을 떼어 만든 단말이라 색·서체·타일 문법을 그대로 잇는다.
    <html data-theme="light"> 가 기본(차가운 흰 공간), data-theme="dark" 는 꺼진 화면 쪽 값으로 만든 변형.
-   테마를 바꿀 때 판(.pane)에도 잠깐 data-theme 를 붙여, 배경 패널이 그 자리까지 바뀐 뒤에 판이 바뀌게 한다.
+   테마를 바꿀 때는 배경과 UI 색이 함께 천천히 섞인다(styles.css 의 .theme-fade).
 
    원칙
-   1. 깊이는 배경(삼각 타일)이 만든다. 상자 그림자는 한 겹만.
+   1. 깊이는 배경(삼각 그리드 공간)이 만든다. 상자 그림자는 한 겹만.
    2. 색은 흰색 + 코발트·차가운 회색 + 아주 적은 금색. 코발트 면은 화면에 한두 덩어리.
    3. 숫자·코드·주소는 고정폭.
    4. 테두리(border/outline)를 쓰지 않는다. 구분은 면의 밝기와 1px 선으로. */
@@ -50,13 +50,10 @@
 
   /* 코발트 박스 바탕 — 깨진 유리 조각. MCES에서는 가로로 긴 띠에 맞게 조각 각도를 바꿨다 */
   --cobalt-glass:
-    linear-gradient(180deg, rgba(10, 16, 48, 0) 30%, rgba(10, 16, 48, 0.42) 100%),
-    linear-gradient(104deg, transparent 0 61%, rgba(214, 226, 240, 0.42) 61% 63.5%, transparent 63.5%),
-    linear-gradient(76deg, transparent 0 78%, rgba(150, 160, 178, 0.6) 78% 84%, transparent 84%),
-    linear-gradient(160deg, transparent 0 82%, rgba(120, 132, 154, 0.7) 82% 100%),
-    linear-gradient(14deg, transparent 0 10%, rgba(70, 104, 255, 0.5) 10% 22%, transparent 22%),
-    radial-gradient(40% 120% at 72% 20%, rgba(170, 200, 255, 0.45), rgba(170, 200, 255, 0) 70%),
-    linear-gradient(100deg, #1530e6 0%, #2a4dff 42%, #4d6bff 66%, #8f98ad 88%, #b9c1cf 100%);
+    linear-gradient(180deg, rgba(10, 16, 48, 0) 40%, rgba(10, 16, 48, 0.28) 100%),
+    linear-gradient(104deg, transparent 0 62%, rgba(214, 226, 240, 0.22) 62% 64%, transparent 64%),
+    radial-gradient(40% 120% at 72% 20%, rgba(170, 200, 255, 0.3), rgba(170, 200, 255, 0) 70%),
+    linear-gradient(100deg, #1a35e0 0%, #2a4dff 45%, #4d6bff 72%, #7d88a6 100%);
 }
 
 /* 밝게 — 차가운 흰 공간 */
@@ -67,10 +64,28 @@
   --paper-mid: #f7fafe;
   --paper-bottom: #f3f7fc;
 
+  /* 배경 — 흰 삼각 그리드 공간 */
+  --bg-white: #fbfdff;
+  --bg-mid: #f7fafe;
+  --bg-white-b: #f3f7fc;
+  --bg-glow: #ffffff;
+  --tri-line: #9db0c2;
+  --tri-line-a: 0.28;
+  --tri-x: #4c6780;
+  --tri-x-a: 0.85;
+  --leak-blend: screen;
+  --leak-1: rgba(255, 255, 255, 0.95);
+  --leak-1b: rgba(236, 246, 255, 0.5);
+  --leak-2: rgba(255, 255, 255, 0.9);
+  --leak-2b: rgba(228, 242, 255, 0.45);
+  --leak-3: rgba(255, 255, 255, 0.85);
+  --leak-3b: rgba(240, 248, 255, 0.4);
+  --bloom: 0.55;
+
   --ink: #1b2230;          /* 제목·숫자 */
   --ink-2: #4b5566;        /* 보조 */
-  --mute: #6a7486;         /* 설명·라벨 */
-  --faint: #8a93a3;        /* 아주 약한 안내 */
+  --mute: #5d6676;         /* 설명·라벨 */
+  --faint: #6f7887;        /* 약한 안내 — 흰 바탕에서도 4.5:1 이상 */
 
   --accent: #1f3cff;       /* 코발트 — 선·점·글자 */
   --accent-text: #1628c4;  /* 작은 글자용 코발트 */
@@ -114,10 +129,10 @@
   --grid-x-glow: rgba(76, 103, 128, 0.12);
   --band-chip: #151a24;                    /* 띠 바닥의 상태 원 */
   --scene-bloom: 0.5;
-  --vignette-a: rgba(44, 70, 96, 0.10);
-  --vignette-b: rgba(36, 60, 86, 0.26);
-  --grain: 0.05;
-  --pane-bg: rgba(247, 250, 254, 0.86);    /* 공간에 선 판 */
+  --vignette-a: rgba(44, 70, 96, 0.05);
+  --vignette-b: rgba(36, 60, 86, 0.13);
+  --grain: 0.02;
+  --pane-bg: rgba(248, 251, 254, 0.94);    /* 공간에 선 판 — 배경이 덜 비치게 */
   --pane-floor: rgba(28, 46, 140, 0.28);   /* 판 아래 바닥 그림자 */
   --tab-on: rgba(255, 255, 255, 0.9);      /* 고른 탭 칸 */
   --tab-off: rgba(27, 34, 48, 0.07);       /* 고르지 않은 탭 칸 — 명도를 낮춘다 */
@@ -133,14 +148,32 @@
 :root[data-theme="dark"],
 [data-theme="dark"] {
   color-scheme: dark;
-  --paper-top: #0a0f17;
-  --paper-mid: #080c13;
-  --paper-bottom: #05080d;
+  --paper-top: #141a25;
+  --paper-mid: #11161f;
+  --paper-bottom: #0d1119;
+
+  /* 배경 — 부드러운 남색 검정 위의 삼각 그리드 */
+  --bg-white: #141a25;
+  --bg-mid: #11161f;
+  --bg-white-b: #0d1119;
+  --bg-glow: #1a2230;
+  --tri-line: #6b7d94;
+  --tri-line-a: 0.24;
+  --tri-x: #9fb2c9;
+  --tri-x-a: 0.5;
+  --leak-blend: screen;
+  --leak-1: rgba(120, 150, 210, 0.16);
+  --leak-1b: rgba(90, 120, 190, 0.07);
+  --leak-2: rgba(110, 140, 200, 0.13);
+  --leak-2b: rgba(80, 110, 180, 0.06);
+  --leak-3: rgba(120, 150, 210, 0.12);
+  --leak-3b: rgba(90, 120, 190, 0.05);
+  --bloom: 0.4;
 
   --ink: #e4ecf6;
   --ink-2: #b4c0d0;
-  --mute: #8592a6;
-  --faint: #5f6b7e;
+  --mute: #9aa6b8;
+  --faint: #7d889a;
 
   --accent: #5b78ff;
   --accent-text: #8fa8ff;
@@ -153,16 +186,16 @@
   --bad-text: #f08aa0;
   --bad-soft: rgba(194, 90, 110, 0.14);
 
-  --surface: rgba(14, 20, 30, 0.86);
-  --surface-solid: #0f1620;
-  --sunk: #0a0f16;
-  --sunk-2: #070b11;
+  --surface: rgba(24, 31, 44, 0.9);
+  --surface-solid: #1a2130;
+  --sunk: #121824;
+  --sunk-2: #0f141e;
   --line: rgba(160, 185, 215, 0.09);
   --line-2: rgba(160, 185, 215, 0.2);
   --hover: rgba(91, 120, 255, 0.08);
   --shadow: 0 14px 34px rgba(0, 0, 0, 0.45);
   --shadow-up: 0 18px 40px rgba(10, 24, 120, 0.5);
-  --overlay: rgba(4, 6, 10, 0.7);
+  --overlay: rgba(10, 13, 19, 0.7);
 
   --chip-bg: rgba(217, 228, 240, 0.92);
   --chip-ink: #0a0f17;
@@ -183,14 +216,14 @@
   --grid-x-glow: rgba(120, 180, 255, 0.08);
   --band-chip: #2a4dff;
   --scene-bloom: 0.42;
-  --vignette-a: rgba(0, 0, 0, 0.18);
-  --vignette-b: rgba(0, 0, 0, 0.5);
-  --grain: 0.08;
-  --pane-bg: rgba(12, 18, 28, 0.86);
+  --vignette-a: rgba(0, 0, 0, 0.09);
+  --vignette-b: rgba(0, 0, 0, 0.25);
+  --grain: 0.03;
+  --pane-bg: rgba(22, 28, 40, 0.94);
   --pane-floor: rgba(40, 70, 255, 0.22);
-  --tab-on: rgba(40, 56, 84, 0.55);
-  --tab-off: rgba(0, 0, 0, 0.35);
-  --tab-off-num: #4a5466;
+  --tab-on: rgba(48, 62, 88, 0.6);
+  --tab-off: rgba(0, 0, 0, 0.22);
+  --tab-off-num: #5d6879;
 
   --screen: #04060a;
   --screen-line: rgba(120, 150, 180, 0.13);

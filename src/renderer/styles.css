@@ -1,6 +1,6 @@
 /* MCES — SCRF 메인 시스템의 화면 형식을 따른 앱 화면
-   - 장면: 삼각 타일 벽(scene.js). 가장자리 색수차·블러·빛 번짐은 캔버스 안에서, 비네트·낟알은 렌즈 층에서
-   - 판: 공간 속에 비스듬히 선다. 왼쪽 판은 바깥쪽 끝이 앞으로(rotateY 13°), 오른쪽 판은 반대로(−14°).
+   - 배경: 흰 삼각 그리드 공간(scene.js). 가장자리 색수차·블러·빛 번짐은 배경에만, 비네트·낟알은 맨 위 렌즈 층에서
+   - 판: 공간 속에 아주 살짝 비스듬히 선다(좌 4° · 우 −4°). 눈이 편하게 기울기와 움직임은 작게.
      모서리 꺾쇠 두 개, 판 아래 바닥 그림자, 테두리 없음
    - 코발트 면은 화면에 하나: 서버 화면은 고른 서버 박스, 만들기 화면은 고른 서버 종류 카드
    - 숫자·코드·주소는 고정폭 */
@@ -13,13 +13,13 @@
 }
 
 :root {
-  --fs-body: 0.88rem;
+  --fs-body: 0.92rem;
   --fs-note: 0.76rem;
   /* 마우스 -1 ~ 1 (scene.js 가 부드럽게 따라가며 채운다) */
   --px: 0;
   --py: 0;
-  --band-top: 100px;
-  --band-bottom: 200px;
+  /* 위쪽 머리글 높이 — 판은 이 아래에서 시작한다 */
+  --band-bottom: 104px;
 }
 
 * { box-sizing: border-box; }
@@ -44,23 +44,68 @@ button, input, select, textarea { font: inherit; color: inherit; letter-spacing:
 ::-webkit-scrollbar-thumb:hover { background: var(--scrf-gray-2); }
 ::-webkit-scrollbar-track { background: transparent; }
 
-/* ═══════════ 장면 ═══════════ */
-.stage { position: fixed; inset: 0; z-index: 0; perspective: 1400px; overflow: hidden; }
+/* ═══════════ 배경 — 흰 삼각 그리드 공간 ═══════════ */
+.stage { position: fixed; inset: 0; z-index: 0; perspective: 1400px; overflow: hidden; opacity: 0; transition: opacity 0.9s var(--ease); }
+:root.bg-on .stage { opacity: 1; }
+.defs { position: absolute; }
 .world {
   position: absolute; inset: 0;
-  transform: rotateY(calc(var(--px) * 0.8deg)) rotateX(calc(var(--py) * -0.6deg)) scale(1.04);
+  transform: rotateY(calc(var(--px) * 2.2deg)) rotateX(calc(var(--py) * -1.6deg)) scale(1.08);
 }
-.tiles { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.world > * { position: absolute; inset: 0; }
+.paper {
+  background:
+    radial-gradient(70% 60% at 50% 42%, var(--bg-glow) 0%, transparent 70%),
+    linear-gradient(180deg, var(--bg-white) 0%, var(--bg-mid) 55%, var(--bg-white-b) 100%);
+}
+.grid {
+  width: 100%; height: 100%; overflow: visible;
+  transform: translate(calc(var(--px) * -10px), calc(var(--py) * -7px));
+  filter: url(#lineGlow);
+}
+.tri-line { fill: none; stroke: var(--tri-line); stroke-opacity: var(--tri-line-a); stroke-width: 0.8; }
+.tri-x { fill: none; stroke: var(--tri-x); stroke-opacity: var(--tri-x-a); stroke-width: 1.4; stroke-linecap: round; }
+/* 빛 덩어리 — 흰빛 위주에 아주 옅은 푸른 기 */
+.leak { inset: auto; border-radius: 50%; mix-blend-mode: var(--leak-blend); filter: blur(40px); }
+.leak-a { width: 60vw; height: 60vw; left: 8vw; top: -22vw; background: radial-gradient(closest-side, var(--leak-1), var(--leak-1b) 50%, transparent); animation: driftA 26s ease-in-out infinite alternate; }
+.leak-b { width: 46vw; height: 46vw; right: -6vw; top: 30vh; background: radial-gradient(closest-side, var(--leak-2), var(--leak-2b) 55%, transparent); animation: driftB 32s ease-in-out infinite alternate; }
+.leak-c { width: 52vw; height: 40vw; left: -10vw; bottom: -18vw; background: radial-gradient(closest-side, var(--leak-3), var(--leak-3b) 55%, transparent); animation: driftC 29s ease-in-out infinite alternate; }
+@keyframes driftA { to { transform: translate(14vw, 8vh) scale(1.1); } }
+@keyframes driftB { to { transform: translate(-12vw, -10vh) scale(0.92); } }
+@keyframes driftC { to { transform: translate(18vw, -6vh) scale(1.08); } }
+/* 창이 뒤로 가면 떠도는 빛을 멈춘다 — 게임·서버에 그래픽 자원을 양보 */
+:root.is-idle .leak, :root.is-idle .grain { animation-play-state: paused; }
 
-/* ═══════════ 렌즈: 비네트 · 낟알 ═══════════ */
-.lens {
-  display: contents;
-  --lx: calc(50% - var(--px) * 2.5%);
-  --ly: calc(50% - var(--py) * 2.5%);
+/* ═══════════ 렌즈 ═══════════
+   배경에만: 가장자리 색수차 → 블러, 그 위로 빛 번짐 (UI 글자에는 걸지 않는다)
+   화면 전체: 옅은 비네트와 낟알 */
+.bg-lens { display: contents; --lx: calc(50% - var(--px) * 6%); --ly: calc(50% - var(--py) * 6%); }
+.bg-lens > * { position: fixed; inset: 0; z-index: 1; pointer-events: none; opacity: 0; transition: opacity 0.9s var(--ease); }
+:root.bg-on .bg-lens > * { opacity: 1; }
+:root.bg-on .bg-lens > .bloom { opacity: var(--bloom); }
+.lens-ca {
+  backdrop-filter: url(#lensCA);
+  mask: radial-gradient(ellipse 74% 72% at var(--lx) var(--ly), transparent 52%, rgba(0, 0, 0, 0.8) 74%, #000 92%);
+  -webkit-mask: radial-gradient(ellipse 74% 72% at var(--lx) var(--ly), transparent 52%, rgba(0, 0, 0, 0.8) 74%, #000 92%);
 }
+.lens-blur {
+  backdrop-filter: blur(4px);
+  mask: radial-gradient(ellipse 78% 76% at var(--lx) var(--ly), transparent 64%, rgba(0, 0, 0, 0.55) 84%, #000 100%);
+  -webkit-mask: radial-gradient(ellipse 78% 76% at var(--lx) var(--ly), transparent 64%, rgba(0, 0, 0, 0.55) 84%, #000 100%);
+}
+.bloom { backdrop-filter: blur(18px) brightness(1.08) saturate(1.15); }
+.lens { display: contents; --lx: calc(50% - var(--px) * 6%); --ly: calc(50% - var(--py) * 6%); }
 .lens > * { position: fixed; inset: 0; pointer-events: none; z-index: 3; }
 .lens-vignette { background: radial-gradient(ellipse 86% 82% at var(--lx) var(--ly), transparent 56%, var(--vignette-a) 82%, var(--vignette-b) 100%); }
-.grain { background-repeat: repeat; opacity: var(--grain); }
+.grain { inset: -50%; background-repeat: repeat; opacity: var(--grain); animation: grain 0.9s steps(3) infinite; }
+@keyframes grain { 33% { transform: translate(-3%, 2%); } 66% { transform: translate(2%, -4%); } }
+
+/* 로딩 화면 — 배경 위로 부드럽게 겹친다 */
+.loader-cv { position: fixed; inset: 0; z-index: 1; width: 100%; height: 100%; pointer-events: none; opacity: 0; transition: opacity 0.45s var(--ease); }
+.loader-cv.is-on { opacity: 1; }
+/* 종료 — 화면이 천천히 어두워진다 */
+.shade { position: fixed; inset: 0; z-index: 9; pointer-events: none; background: #05070b; opacity: 0; transition: opacity 0.85s var(--ease); }
+:root.is-shutdown .shade { opacity: 1; }
 
 /* ═══════════ 글자 ═══════════ */
 h1, h2, h3 { color: var(--ink); margin: 0; }
@@ -89,8 +134,8 @@ p { margin: 0; line-height: 1.6; color: var(--ink-2); }
   background: var(--pane-bg);
   transform-origin: 0% 50%;
   transform:
-    translate(calc(var(--px) * -10px), calc(var(--py) * -7px))
-    rotateY(calc(13deg - var(--px) * 3deg)) rotateX(calc(var(--py) * 2deg));
+    translate(calc(var(--px) * -4px), calc(var(--py) * -3px))
+    rotateY(calc(4deg - var(--px) * 0.8deg)) rotateX(calc(var(--py) * 0.6deg));
 }
 .pane-r {
   right: 4.5vw; top: calc(var(--band-bottom) + 14px); bottom: 6vh;
@@ -99,8 +144,8 @@ p { margin: 0; line-height: 1.6; color: var(--ink-2); }
   background: var(--pane-bg);
   transform-origin: 100% 50%;
   transform:
-    translate(calc(var(--px) * -14px), calc(var(--py) * -9px))
-    rotateY(calc(-14deg - var(--px) * 3deg)) rotateX(calc(var(--py) * 2deg));
+    translate(calc(var(--px) * -5px), calc(var(--py) * -3px))
+    rotateY(calc(-4deg - var(--px) * 0.8deg)) rotateX(calc(var(--py) * 0.6deg));
 }
 /* 판 아래 바닥에 떨어지는 그림자 */
 .pane::after {
@@ -129,8 +174,8 @@ p { margin: 0; line-height: 1.6; color: var(--ink-2); }
   padding: 20px 24px 16px;
   transform-origin: 50% 100%;
   transform:
-    translate(calc(var(--px) * -8px), calc(var(--py) * -6px))
-    rotateX(calc(3deg + var(--py) * 1.5deg)) rotateY(calc(var(--px) * -2deg));
+    translate(calc(var(--px) * -4px), calc(var(--py) * -3px))
+    rotateX(calc(1deg + var(--py) * 0.5deg)) rotateY(calc(var(--px) * -0.6deg));
 }
 :root[data-page="server"] .col-a { flex: 0 0 clamp(300px, 26vw, 400px); }
 :root[data-page="server"] .col-b {
@@ -144,16 +189,21 @@ p { margin: 0; line-height: 1.6; color: var(--ink-2); }
 .pane-label { font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.18em; color: var(--faint); }
 .pane-note { margin-top: 12px; font-size: 0.8rem; color: var(--mute); }
 
-/* ═══════════ 왼쪽 위 로고 — 켜진 계단 위에 ═══════════ */
-.brand {
-  position: absolute; left: 4.6vw; top: calc((var(--band-top) + var(--band-bottom)) / 2);
-  display: flex; align-items: center; gap: 18px;
-  transform: translateY(-50%) translate(calc(var(--px) * -6px), calc(var(--py) * -4px));
-  pointer-events: none;
+/* ═══════════ 위쪽 머리글 — 왼쪽 로고, 오른쪽 앱 버전과 PC 사양 ═══════════ */
+.topbar {
+  position: fixed; left: 0; right: 0; top: 0; height: var(--band-bottom); z-index: 2; pointer-events: none;
+  display: flex; align-items: center; justify-content: space-between; padding: 0 4.6vw 0 4.6vw;
+  opacity: 0; translate: 0 -8px; transition: opacity 0.8s var(--ease) 0.1s, translate 0.8s var(--ease) 0.1s;
 }
+:root.bg-on .topbar { opacity: 1; translate: 0 0; }
+.brand { display: flex; align-items: center; gap: 16px; }
 .brand-text { display: flex; flex-direction: column; gap: 6px; }
-.brand-word { font-weight: 800; font-size: clamp(22px, 2vw, 32px); line-height: 1; letter-spacing: 0.42em; margin-right: -0.42em; color: var(--ink); }
-.brand-sub { font-family: var(--mono); font-size: 0.62rem; letter-spacing: 0.22em; color: var(--mute); }
+.brand-word { font-weight: 800; font-size: clamp(20px, 1.7vw, 28px); line-height: 1; letter-spacing: 0.42em; margin-right: -0.42em; color: var(--ink); }
+.brand-sub { font-family: var(--mono); font-size: 0.62rem; letter-spacing: 0.2em; color: var(--mute); }
+.band-info { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; text-align: right; }
+.band-code { font-family: var(--mono); font-size: 0.86rem; font-weight: 700; letter-spacing: 0.08em; color: var(--ink); padding-left: 10px; box-shadow: inset 2px 0 0 var(--gold); }
+.band-right { font-family: var(--mono); font-size: 0.64rem; letter-spacing: 0.14em; color: var(--mute); white-space: pre; }
+
 
 /* ═══════════ 왼쪽 판: 서버 목록 — SCRF 번호 탭을 세로로 ═══════════ */
 .nav { display: flex; flex-direction: column; gap: 2px; margin-bottom: 18px; }
@@ -212,7 +262,7 @@ p { margin: 0; line-height: 1.6; color: var(--ink-2); }
 .address-col { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
 .address-label { font-size: 0.72rem; font-weight: 600; color: rgba(255, 255, 255, 0.78); }
 .address-hint { font-size: 0.72rem; color: rgba(255, 255, 255, 0.7); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.address-text { font-family: var(--mono); font-size: 1.02rem; font-weight: 600; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; user-select: text; text-shadow: 0 0 14px rgba(170, 200, 255, 0.55); }
+.address-text { font-family: var(--mono); font-size: 1.02rem; font-weight: 600; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; user-select: text; }
 .srv-card .btn { color: #fff; }
 .srv-card .btn .ico { color: rgba(255, 255, 255, 0.85); }
 .srv-card .btn:hover { background: rgba(255, 255, 255, 0.14); color: #fff; }
@@ -341,63 +391,20 @@ p { margin: 0; line-height: 1.6; color: var(--ink-2); }
 .type-card.on { background: var(--accent-soft); box-shadow: inset 0 0 0 2px var(--accent); }
 .type-card.on h3 { color: var(--accent-text); }
 
-/* ═══════════ 켜질 때 · 바뀔 때: UI가 글리치하며 나타나고 사라진다 (SCRF glitchIn / glitchOut) ═══════════ */
+/* ═══════════ 켜질 때 · 바뀔 때: UI가 부드럽게 올라오고, 내려가며 사라진다 ═══════════ */
 :root[data-ui="off"]:not(.is-ready) .ui, :root.is-ready[data-ui="off"] .pane { visibility: hidden; }
-/* 로딩 화면 동안에는 로고도 걷는다 */
-.brand { transition: opacity 0.5s var(--ease), filter 0.5s var(--ease); }
-
 :root[data-ui="out"] .ui { pointer-events: none; }
 :root[data-ui="out"] .ui * { pointer-events: none !important; }
-:root[data-ui="in"] .brand { animation: glitchIn 0.9s both; }
-:root[data-ui="in"] .pane-l { animation: glitchIn 0.9s 0.08s both; }
-:root[data-ui="in"] .pane-r { animation: glitchIn 0.9s 0.18s both; }
-:root[data-ui="in"][data-glitch="clean"] .brand,
-:root[data-ui="in"][data-glitch="clean"] .pane { animation-name: fadeUp; animation-timing-function: var(--ease); }
-:root[data-ui="out"] .pane { animation: softOut 0.6s var(--ease) both; }
-:root[data-ui="out"] .pane-r { animation-delay: 0.06s; }
-/* 화면 전환 뒤: 판은 흐림이 걷히며 나타나고, 왼쪽 판의 줄은 70ms씩 늦게 옆에서 미끄러져 들어온다 (PR-SCRF) */
-:root[data-ui="in"][data-glitch="soft"] .brand { animation: none; }
-:root[data-ui="in"][data-glitch="soft"] .pane { animation: softIn 0.7s var(--ease) both; }
-:root[data-ui="in"][data-glitch="soft"] .pane-r { animation-delay: 0.06s; }
-:root[data-ui="in"][data-glitch="soft"] :is(#side, #detail, .main-scroll > *, .main-scroll > .stack, .tabs-wrap) > * { animation: rowIn 0.8s var(--ease) both; animation-delay: calc(0.15s + var(--i, 0) * 70ms); }
-:is(#side, #detail, .main-scroll > *, .tabs-wrap) > :nth-child(2) { --i: 1; }
-:is(#side, #detail, .main-scroll > *, .tabs-wrap) > :nth-child(3) { --i: 2; }
-:is(#side, #detail, .main-scroll > *, .tabs-wrap) > :nth-child(4) { --i: 3; }
-:is(#side, #detail, .main-scroll > *, .tabs-wrap) > :nth-child(5) { --i: 4; }
-:is(#side, #detail, .main-scroll > *, .tabs-wrap) > :nth-child(n + 6) { --i: 5; }
-@keyframes softOut { from { opacity: 1; filter: none; translate: 0 0; } to { opacity: 0; filter: blur(10px); translate: 0 12px; } }
-@keyframes softIn { from { opacity: 0; filter: blur(10px); translate: 0 12px; } to { opacity: 1; filter: none; translate: 0 0; } }
-@keyframes rowIn { from { opacity: 0; translate: -18px 0; filter: blur(6px); } to { opacity: 1; translate: 0 0; filter: none; } }
-@keyframes fadeUp { from { opacity: 0; translate: 0 12px; filter: blur(6px); } to { opacity: 1; translate: 0 0; filter: none; } }
-@keyframes glitchIn {
-  0%   { opacity: 0; clip-path: inset(0 0 100% 0); translate: 0 0; filter: none; animation-timing-function: steps(1, end); }
-  5%   { opacity: 1; clip-path: inset(18% 0 58% 0); translate: -10px 0; filter: drop-shadow(-4px 0 rgba(40, 230, 255, 0.85)) drop-shadow(4px 0 rgba(255, 60, 190, 0.85)) brightness(1.6); animation-timing-function: steps(1, end); }
-  9%   { opacity: 0; animation-timing-function: steps(1, end); }
-  14%  { opacity: 0.6; clip-path: inset(52% 0 12% 0); translate: 7px 0; animation-timing-function: steps(1, end); }
-  19%  { opacity: 0.1; clip-path: inset(0 0 70% 0); animation-timing-function: steps(1, end); }
-  25%  { opacity: 1; clip-path: inset(0 0 38% 0); translate: -3px 0; filter: drop-shadow(-3px 0 rgba(40, 230, 255, 0.8)) drop-shadow(3px 0 rgba(255, 60, 190, 0.8)) brightness(1.3); animation-timing-function: steps(1, end); }
-  30%  { opacity: 0; animation-timing-function: steps(1, end); }
-  36%  { opacity: 0.5; clip-path: inset(68% 0 0 0); translate: 12px 0; animation-timing-function: steps(1, end); }
-  42%  { opacity: 1; clip-path: inset(-60px -60px -80px -60px); translate: -2px 0; filter: drop-shadow(-2px 0 rgba(40, 230, 255, 0.7)) drop-shadow(2px 0 rgba(255, 60, 190, 0.7)); animation-timing-function: steps(1, end); }
-  50%  { opacity: 0.25; translate: 4px 0; animation-timing-function: steps(1, end); }
-  55%  { opacity: 1; translate: 0 0; filter: brightness(1.25); animation-timing-function: steps(1, end); }
-  63%  { opacity: 0.55; clip-path: inset(30% 0 40% 0); animation-timing-function: steps(1, end); }
-  67%  { opacity: 1; clip-path: inset(-60px -60px -80px -60px); filter: none; animation-timing-function: steps(1, end); }
-  78%  { opacity: 0.8; animation-timing-function: steps(1, end); }
-  82%  { opacity: 1; animation-timing-function: ease-out; }
-  100% { opacity: 1; clip-path: none; translate: 0 0; filter: none; }
-}
-@keyframes glitchOut {
-  0%   { opacity: 1; clip-path: inset(-60px -60px -80px -60px); translate: 0 0; filter: none; animation-timing-function: steps(1, end); }
-  12%  { opacity: 1; clip-path: inset(10% 0 40% 0); translate: 8px 0; filter: drop-shadow(-4px 0 rgba(40, 230, 255, 0.85)) drop-shadow(4px 0 rgba(255, 60, 190, 0.85)) brightness(1.4); animation-timing-function: steps(1, end); }
-  22%  { opacity: 0.2; animation-timing-function: steps(1, end); }
-  32%  { opacity: 0.9; clip-path: inset(50% 0 10% 0); translate: -10px 0; animation-timing-function: steps(1, end); }
-  44%  { opacity: 0; animation-timing-function: steps(1, end); }
-  54%  { opacity: 0.6; clip-path: inset(30% 0 52% 0); translate: 14px 0; animation-timing-function: steps(1, end); }
-  66%  { opacity: 0; animation-timing-function: steps(1, end); }
-  74%  { opacity: 0.3; clip-path: inset(70% 0 20% 0); translate: -6px 0; animation-timing-function: steps(1, end); }
-  100% { opacity: 0; clip-path: inset(50% 0 50% 0); }
-}
+:root[data-ui="in"] .pane { animation: paneUp 0.7s var(--ease) both; }
+:root[data-ui="in"] .pane-r { animation-delay: 0.07s; }
+:root[data-ui="out"] .pane { animation: paneDown 0.45s var(--ease) both; }
+:root[data-ui="out"] .pane-r { animation-delay: 0.04s; }
+/* 처음 켤 때는 조금 더 천천히 */
+:root[data-ui="in"][data-glitch="boot"] .pane { animation-duration: 1s; animation-delay: 0.05s; }
+:root[data-ui="in"][data-glitch="boot"] .pane-r { animation-delay: 0.16s; }
+@keyframes paneUp { from { opacity: 0; translate: 0 18px; } to { opacity: 1; translate: 0 0; } }
+@keyframes paneDown { from { opacity: 1; translate: 0 0; } to { opacity: 0; translate: 0 14px; } }
+@keyframes fadeUp { from { opacity: 0; translate: 0 10px; } to { opacity: 1; translate: 0 0; } }
 
 /* ═══════════ 오른쪽 판 ═══════════ */
 .main { position: relative; display: flex; flex-direction: column; flex: 1; min-height: 0; container-type: inline-size; }
@@ -603,7 +610,7 @@ input[type="number"].field { font-family: var(--mono); }
   user-select: text;
 }
 .console::-webkit-scrollbar-thumb { background: rgba(120, 150, 180, 0.25); }
-.console-line { white-space: pre-wrap; word-break: break-all; color: rgba(217, 228, 240, 0.78); text-shadow: 0 0 5px rgba(120, 180, 255, 0.35); }
+.console-line { white-space: pre-wrap; word-break: break-all; color: rgba(217, 228, 240, 0.82); }
 .console-line.k-warn { color: var(--scrf-warn); }
 .console-line.k-error { color: #ff8ea3; }
 .console-line.k-cmd { color: var(--scrf-log-done); }
@@ -676,7 +683,7 @@ input[type="number"].field { font-family: var(--mono); }
 .mark-fabric .mark-core i, .mark-hybrid .mark-core i { border-radius: 1px; background: var(--mark-in); }
 .mark-hybrid .mark-core i:first-child { grid-row: span 2; }
 /* 로고 표시 — 코발트 면에 빛 번짐 */
-.brand-mark { --m: clamp(46px, 3.6vw, 60px); --mark-in: #fff; border-radius: 4px; background: var(--cobalt-glass); filter: drop-shadow(0 0 10px rgba(77, 107, 255, 0.55)) drop-shadow(0 8px 18px rgba(24, 48, 200, 0.3)); }
+.brand-mark { --m: clamp(40px, 3vw, 50px); --mark-in: #fff; border-radius: 4px; background: var(--cobalt-glass); box-shadow: 0 6px 16px rgba(24, 48, 200, 0.18); }
 .type-ico { --mark-in: var(--scrf-gray-2); background: var(--sunk); margin-bottom: 6px; }
 .type-card.on .type-ico { --mark-in: var(--accent); background: #fff; }
 
@@ -761,12 +768,11 @@ input[type="number"].field { font-family: var(--mono); }
 /* ═══════════ 종료: UI가 아래로 내려가며 사라진다 ═══════════ */
 :root[data-ui="exit"] .pane { animation: exitDown 0.7s var(--ease) both; }
 :root[data-ui="exit"] .pane-r { animation-delay: 0.06s; }
-@keyframes exitDown { to { opacity: 0; translate: 0 70px; filter: blur(8px); } }
+@keyframes exitDown { to { opacity: 0; translate: 0 40px; } }
+:root[data-ui="exit"] .topbar { opacity: 0; translate: 0 -8px; transition-duration: 0.6s; transition-delay: 0s; }
 
-/* 테마 전환: 배경 패널이 판 자리까지 바뀌면 판도 잠깐 밝아졌다가 새 색으로 */
-/* ═══════════ 테마 전환 — UI 색은 배경 패널과 함께 천천히 섞이며 바뀐다 ═══════════
-   색 토큰을 <color> 로 등록해 두면 토큰 값이 바뀔 때 그 사이 색으로 이어진다.
-   :root 는 그대로 두고(배경 장면은 새 색을 바로 읽는다) UI 쪽에서만 섞는다. */
+/* ═══════════ 테마 전환 — 배경과 UI가 함께 천천히 섞이며 바뀐다 ═══════════
+   색 토큰을 <color>·<number> 로 등록해 두면 토큰 값이 바뀔 때 그 사이 값으로 이어진다 */
 @property --ink { syntax: "<color>"; inherits: true; initial-value: transparent; }
 @property --ink-2 { syntax: "<color>"; inherits: true; initial-value: transparent; }
 @property --mute { syntax: "<color>"; inherits: true; initial-value: transparent; }
@@ -798,5 +804,22 @@ input[type="number"].field { font-family: var(--mono); }
 @property --tab-on { syntax: "<color>"; inherits: true; initial-value: transparent; }
 @property --tab-off { syntax: "<color>"; inherits: true; initial-value: transparent; }
 @property --tab-off-num { syntax: "<color>"; inherits: true; initial-value: transparent; }
-:root { --theme-fade: 1.5s cubic-bezier(0.45, 0, 0.25, 1) 0.1s; }
-.theme-fade .ui, .theme-fade .lens > *, .theme-fade .toasts, .theme-fade .overlay { transition: --ink var(--theme-fade), --ink-2 var(--theme-fade), --mute var(--theme-fade), --faint var(--theme-fade), --accent var(--theme-fade), --accent-text var(--theme-fade), --accent-soft var(--theme-fade), --accent-glow var(--theme-fade), --gold var(--theme-fade), --gold-text var(--theme-fade), --warn-text var(--theme-fade), --bad var(--theme-fade), --bad-text var(--theme-fade), --bad-soft var(--theme-fade), --surface var(--theme-fade), --surface-solid var(--theme-fade), --sunk var(--theme-fade), --sunk-2 var(--theme-fade), --line var(--theme-fade), --line-2 var(--theme-fade), --hover var(--theme-fade), --overlay var(--theme-fade), --chip-bg var(--theme-fade), --chip-ink var(--theme-fade), --vignette-a var(--theme-fade), --vignette-b var(--theme-fade), --pane-bg var(--theme-fade), --pane-floor var(--theme-fade), --tab-on var(--theme-fade), --tab-off var(--theme-fade), --tab-off-num var(--theme-fade); }
+@property --bg-white { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --bg-mid { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --bg-white-b { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --bg-glow { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --tri-line { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --tri-x { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --leak-1 { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --leak-1b { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --leak-2 { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --leak-2b { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --leak-3 { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --leak-3b { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --paper-bottom { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --tri-line-a { syntax: "<number>"; inherits: true; initial-value: 0; }
+@property --tri-x-a { syntax: "<number>"; inherits: true; initial-value: 0; }
+@property --bloom { syntax: "<number>"; inherits: true; initial-value: 0; }
+@property --grain { syntax: "<number>"; inherits: true; initial-value: 0; }
+:root { --theme-fade: 0.9s cubic-bezier(0.45, 0, 0.25, 1); }
+:root.theme-fade { transition: --ink var(--theme-fade), --ink-2 var(--theme-fade), --mute var(--theme-fade), --faint var(--theme-fade), --accent var(--theme-fade), --accent-text var(--theme-fade), --accent-soft var(--theme-fade), --accent-glow var(--theme-fade), --gold var(--theme-fade), --gold-text var(--theme-fade), --warn-text var(--theme-fade), --bad var(--theme-fade), --bad-text var(--theme-fade), --bad-soft var(--theme-fade), --surface var(--theme-fade), --surface-solid var(--theme-fade), --sunk var(--theme-fade), --sunk-2 var(--theme-fade), --line var(--theme-fade), --line-2 var(--theme-fade), --hover var(--theme-fade), --overlay var(--theme-fade), --chip-bg var(--theme-fade), --chip-ink var(--theme-fade), --vignette-a var(--theme-fade), --vignette-b var(--theme-fade), --pane-bg var(--theme-fade), --pane-floor var(--theme-fade), --tab-on var(--theme-fade), --tab-off var(--theme-fade), --tab-off-num var(--theme-fade), --bg-white var(--theme-fade), --bg-mid var(--theme-fade), --bg-white-b var(--theme-fade), --bg-glow var(--theme-fade), --tri-line var(--theme-fade), --tri-x var(--theme-fade), --leak-1 var(--theme-fade), --leak-1b var(--theme-fade), --leak-2 var(--theme-fade), --leak-2b var(--theme-fade), --leak-3 var(--theme-fade), --leak-3b var(--theme-fade), --paper-bottom var(--theme-fade), --tri-line-a var(--theme-fade), --tri-x-a var(--theme-fade), --bloom var(--theme-fade), --grain var(--theme-fade); }
