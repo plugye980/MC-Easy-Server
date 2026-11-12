@@ -90,12 +90,11 @@
 
   // ---------- 시작 ----------
   async function init() {
-    // 켜자마자 패널이 켜지며 구동한다 — 오류 있음 / 없음 두 가지 중 하나
-    const faulty = Math.random() < 0.5;
-    const booting = window.Scene ? window.Scene.boot(faulty) : Promise.resolve();
+    // 켜면 배경이 떠오르고, 그 위로 UI가 부드럽게 올라온다
     state.settings = { ...state.settings, ...((await call('app:settings')) || {}) };
     state.appInfo = (await call('app:info')) || { version: '', device: '' };
     applyTheme(state.settings.theme);
+    const booting = window.Scene ? window.Scene.boot() : Promise.resolve();
     const [specs, servers, tunnel, javaInstalled] = await Promise.all([call('system:specs'), call('servers:list'), call('tunnel:state'), call('java:installed')]);
     state.specs = specs;
     state.servers = servers || [];
@@ -107,13 +106,13 @@
     render();
     setInterval(autoCheck, 60 * 1000);
     await booting;
-    uiIn(faulty ? 'glitch' : 'clean');
+    uiIn('boot');
     setTimeout(() => root.classList.add('is-ready'), 1200);
   }
 
-  /* ---------- 화면 전환 (PR-SCRF와 같은 구조) ----------
-     UI가 흐려지며 사라짐 → 배경 패널이 새 배치로 재정렬 → 새 UI가 흐림이 걷히며 나타남.
-     글리치 등장은 처음 구동 때만. 서버를 만들 때만 그 사이에 로딩 화면이 들어간다(패널이 칸마다 로딩 화면으로 넘어갔다가 돌아온다). */
+  /* ---------- 화면 전환 ----------
+     UI가 아래로 내려가며 사라짐 → 새 UI가 아래에서 부드럽게 올라옴. 배경은 그대로.
+     서버를 만들 때만 그 사이에 로딩 화면이 배경 위로 부드럽게 겹쳤다가 걷힌다. */
   const root = document.documentElement;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   let busy = false;
@@ -126,12 +125,9 @@
   }
   async function uiOut() {
     root.dataset.ui = 'out';
-    await sleep(650);
+    await sleep(480);
     root.dataset.ui = 'off';
   }
-  const layoutOf = () => (state.page === 'server' ? 'server' : 'home');
-  // 서버 페이지의 배경 배치는 서버마다 다르다 (서버 id로 정한다)
-  const seedOf = () => (state.page === 'server' ? state.selected : '');
   /** 화면 바꾸기: setup()으로 상태를 바꾸고, 배경을 재정렬한 뒤 새 UI를 띄운다 */
   async function goto(setup) {
     if (busy) return;
@@ -139,11 +135,10 @@
     await uiOut();
     setup();
     render();
-    if (window.Scene) await window.Scene.arrange(layoutOf(), seedOf());
     uiIn('soft');
     busy = false;
   }
-  /** 로딩 화면을 띄운 채 일을 한다 — 만들기 · 가져오기. 끝나면 새 배치의 배경으로 넘어오고 setup으로 화면을 정한다 */
+  /** 로딩 화면을 띄운 채 일을 한다 — 만들기 · 가져오기. 끝나면 로딩 화면을 걷고 setup으로 화면을 정한다 */
   async function runLoad({ cap, status, mark, work, progressKey }) {
     root.classList.add('is-loading');
     await uiOut();
@@ -160,11 +155,11 @@
   async function leaveLoader(setup) {
     setup();
     render();
-    if (window.Scene) await window.Scene.fromLoader(layoutOf(), seedOf());
+    if (window.Scene) await window.Scene.fromLoader();
     root.classList.remove('is-loading');
     uiIn('soft');
   }
-  /** 서버 목록에서 고르면: 배경 재정렬 → 그 서버 페이지 (이미 만든 서버는 로딩 없이) */
+  /** 서버 목록에서 고르면: UI가 내려갔다가 그 서버 페이지가 올라온다 (이미 만든 서버는 로딩 없이) */
   function openServer(id) {
     if (!state.servers.find((x) => x.id === id)) return;
     goto(() => {
@@ -216,10 +211,11 @@
         applyTheme(next);
         break;
       }
-      const seg = $('#paneFoot .seg');
-      const at = seg ? seg.getBoundingClientRect() : { left: 0, top: innerHeight, width: 0, height: 0 };
+      // 배경과 UI 색이 함께 천천히 섞인다 (styles.css 의 .theme-fade)
       root.classList.add('theme-fade');
-      await Promise.all([window.Scene.refresh(at.left + at.width / 2, at.top + at.height / 2, () => applyTheme(next)), sleep(1700)]);
+      void document.body.offsetWidth;
+      applyTheme(next);
+      await sleep(950);
       root.classList.remove('theme-fade');
       if (live.updateMetrics) live.updateMetrics();
     }
@@ -506,7 +502,7 @@
       s.status === 'stopped'
         ? { text: '서버 켜기', fn: () => startServer(s.id) }
         : s.status === 'running'
-          ? { text: '서버 끄기', fn: () => call('server:stop', s.id) }
+          ? { text: '서버 끄기', fn: () => confirmPower(s, 'stop') }
           : { text: s.status === 'starting' ? '켜는 중…' : '끄는 중…', fn: null };
     // 코발트 박스 위쪽(이름 칸)을 눌러도 켜고 끈다 — 아래 시작 줄과 같은 동작
     Object.assign(live.head, { onclick: go.fn, tabIndex: go.fn ? 0 : -1, title: go.fn ? `눌러서 ${go.text}` : '' });
@@ -537,7 +533,7 @@
       h(
         'div.sub-actions',
         null,
-        button('다시 켜기', () => call('server:restart', s.id), { icon: '↻', small: true, kind: 'ghost', disabled: s.status !== 'running' }),
+        button('다시 켜기', () => confirmPower(s, 'restart'), { icon: '↻', small: true, kind: 'ghost', disabled: s.status !== 'running' }),
         button('업데이트', () => openUpdate(s), { icon: '⬆', small: true, kind: 'ghost', disabled: busy }),
         button('삭제', () => removeServer(s), { icon: '✕', small: true, kind: 'danger', disabled: busy }),
       ),
@@ -557,6 +553,30 @@
       );
     };
     live.updateStats();
+  }
+
+  /** 끄기 · 다시 켜기는 한 번 더 묻는다 — 잘못 눌러 서버가 꺼지는 일을 막는다 (Enter 는 취소 쪽) */
+  async function confirmPower(s, what) {
+    const cur = state.servers.find((x) => x.id === s.id) || s;
+    const n = (cur.players || []).length;
+    const stop = what === 'stop';
+    const ok = await modal({
+      title: stop ? '서버 끄기' : '서버 다시 켜기',
+      body: h(
+        'div.stack',
+        { style: { gap: '6px' } },
+        h('p', null, `"${cur.name}" 서버를 ${stop ? '끕니다' : '껐다가 다시 켭니다'}. 월드는 저장한 뒤 ${stop ? '끕니다' : '다시 켭니다'}.`),
+        n ? h('p.note.bad', null, `지금 ${n}명이 접속 중 — 모두 연결이 끊깁니다.`) : null,
+      ),
+      actions: [
+        { label: '취소', value: false, focus: true },
+        { label: stop ? '끄기' : '다시 켜기', value: true, kind: 'danger' },
+      ],
+    });
+    if (!ok) return;
+    const now = state.servers.find((x) => x.id === s.id);
+    if (!now || now.status !== 'running') return; // 묻는 사이 상태가 바뀌었으면 하지 않는다
+    await call(stop ? 'server:stop' : 'server:restart', s.id);
   }
 
   async function startServer(id) {

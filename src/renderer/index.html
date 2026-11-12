@@ -9,8 +9,16 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <!-- 장면: 삼각 타일 벽 (scene.js). 마우스에 따라 아주 조금 기운다 -->
+  <!-- 배경: 흰 삼각 그리드 공간 (scene.js). 마우스에 따라 아주 조금 기운다 -->
   <div class="stage" aria-hidden="true"><div class="world"></div></div>
+  <!-- 배경에만 거는 렌즈: 가장자리 색수차 → 블러, 그 위로 빛 번짐 (UI 글자에는 걸지 않는다) -->
+  <div class="bg-lens" aria-hidden="true">
+    <div class="lens-ca"></div>
+    <div class="lens-blur"></div>
+    <div class="bloom"></div>
+  </div>
+  <!-- 위쪽 머리글: 로고 · 앱 버전 · PC 사양 -->
+  <header class="topbar" aria-hidden="true"></header>
 
   <!-- 공간 속에 비스듬히 선 판: 왼쪽은 서버 목록과 고른 서버, 오른쪽은 탭과 내용 -->
   <div class="ui">
@@ -33,11 +41,13 @@
     </section>
   </div>
 
-  <!-- 렌즈: 비네트와 낟알 (가장자리 색수차·블러·빛 번짐은 캔버스 안에서) -->
+  <!-- 화면 전체 렌즈: 옅은 비네트와 낟알 -->
   <div class="lens" aria-hidden="true">
     <div class="lens-vignette"></div>
     <div class="grain"></div>
   </div>
+  <!-- 종료할 때 천천히 덮이는 어둠 -->
+  <div class="shade" aria-hidden="true"></div>
 
   <div class="toasts" id="toasts" aria-live="polite"></div>
   <div class="overlay" id="overlay" hidden></div>
