@@ -223,14 +223,23 @@ function modal({ title, body, actions }) {
       { role: 'dialog', 'aria-modal': 'true' },
       h('h3.modal-title', null, title),
       h('div.modal-body', null, body),
-      h('div.modal-actions', null, actions.map((a) => button(a.label, () => close(a.value), { kind: a.kind }))),
+      h(
+        'div.modal-actions',
+        null,
+        actions.map((a) => {
+          const b = button(a.label, () => close(a.value), { kind: a.kind });
+          if (a.focus) b.dataset.focus = '1';
+          return b;
+        }),
+      ),
     );
     overlay.replaceChildren(card);
     overlay.hidden = false;
     overlay.onclick = (e) => {
       if (e.target === overlay) close(null);
     };
-    const first = card.querySelector('.btn-primary, .btn-danger');
+    // focus: true 인 버튼을 먼저 고른다 (잘못 누르면 곤란한 확인 창은 취소에 둔다)
+    const first = card.querySelector('[data-focus]') || card.querySelector('.btn-primary, .btn-danger');
     if (first) first.focus();
   });
 }

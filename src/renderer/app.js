@@ -502,7 +502,7 @@
       s.status === 'stopped'
         ? { text: '서버 켜기', fn: () => startServer(s.id) }
         : s.status === 'running'
-          ? { text: '서버 끄기', fn: () => call('server:stop', s.id) }
+          ? { text: '서버 끄기', fn: () => confirmPower(s, 'stop') }
           : { text: s.status === 'starting' ? '켜는 중…' : '끄는 중…', fn: null };
     // 코발트 박스 위쪽(이름 칸)을 눌러도 켜고 끈다 — 아래 시작 줄과 같은 동작
     Object.assign(live.head, { onclick: go.fn, tabIndex: go.fn ? 0 : -1, title: go.fn ? `눌러서 ${go.text}` : '' });
@@ -533,7 +533,7 @@
       h(
         'div.sub-actions',
         null,
-        button('다시 켜기', () => call('server:restart', s.id), { icon: '↻', small: true, kind: 'ghost', disabled: s.status !== 'running' }),
+        button('다시 켜기', () => confirmPower(s, 'restart'), { icon: '↻', small: true, kind: 'ghost', disabled: s.status !== 'running' }),
         button('업데이트', () => openUpdate(s), { icon: '⬆', small: true, kind: 'ghost', disabled: busy }),
         button('삭제', () => removeServer(s), { icon: '✕', small: true, kind: 'danger', disabled: busy }),
       ),
@@ -553,6 +553,30 @@
       );
     };
     live.updateStats();
+  }
+
+  /** 끄기 · 다시 켜기는 한 번 더 묻는다 — 잘못 눌러 서버가 꺼지는 일을 막는다 (Enter 는 취소 쪽) */
+  async function confirmPower(s, what) {
+    const cur = state.servers.find((x) => x.id === s.id) || s;
+    const n = (cur.players || []).length;
+    const stop = what === 'stop';
+    const ok = await modal({
+      title: stop ? '서버 끄기' : '서버 다시 켜기',
+      body: h(
+        'div.stack',
+        { style: { gap: '6px' } },
+        h('p', null, `"${cur.name}" 서버를 ${stop ? '끕니다' : '껐다가 다시 켭니다'}. 월드는 저장한 뒤 ${stop ? '끕니다' : '다시 켭니다'}.`),
+        n ? h('p.note.bad', null, `지금 ${n}명이 접속 중 — 모두 연결이 끊깁니다.`) : null,
+      ),
+      actions: [
+        { label: '취소', value: false, focus: true },
+        { label: stop ? '끄기' : '다시 켜기', value: true, kind: 'danger' },
+      ],
+    });
+    if (!ok) return;
+    const now = state.servers.find((x) => x.id === s.id);
+    if (!now || now.status !== 'running') return; // 묻는 사이 상태가 바뀌었으면 하지 않는다
+    await call(stop ? 'server:stop' : 'server:restart', s.id);
   }
 
   async function startServer(id) {
