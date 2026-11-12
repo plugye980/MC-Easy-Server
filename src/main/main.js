@@ -34,7 +34,7 @@ function createWindow() {
     height: Math.max(680, Math.min(920, area.height - 40)),
     minWidth: 1040,
     minHeight: 680,
-    backgroundColor: settings.theme === 'dark' ? '#0d1119' : '#f3f7fc',
+    backgroundColor: settings.theme === 'dark' ? '#0d1119' : '#eaf0f8',
     title: 'MCES',
     icon: path.join(__dirname, '..', 'renderer', 'icon.png'),
     autoHideMenuBar: true,

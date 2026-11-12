@@ -1,6 +1,6 @@
 /* MCES — SCRF 메인 시스템의 화면 형식을 따른 앱 화면
    - 배경: 흰 삼각 그리드 공간(scene.js). 가장자리 색수차·블러·빛 번짐은 배경에만, 비네트·낟알은 맨 위 렌즈 층에서
-   - 판: 공간 속에 아주 살짝 비스듬히 선다(좌 4° · 우 −4°). 눈이 편하게 기울기와 움직임은 작게.
+   - 판: 평평하게 선다. 글자에는 어떤 블러·기울기도 걸지 않는다(배경만 마우스에 따라 아주 조금 기운다).
      모서리 꺾쇠 두 개, 판 아래 바닥 그림자, 테두리 없음
    - 코발트 면은 화면에 하나: 서버 화면은 고른 서버 박스, 만들기 화면은 고른 서버 종류 카드
    - 숫자·코드·주소는 고정폭 */
@@ -47,54 +47,54 @@ button, input, select, textarea { font: inherit; color: inherit; letter-spacing:
 /* ═══════════ 배경 — 흰 삼각 그리드 공간 ═══════════ */
 .stage { position: fixed; inset: 0; z-index: 0; perspective: 1400px; overflow: hidden; opacity: 0; transition: opacity 0.9s var(--ease); }
 :root.bg-on .stage { opacity: 1; }
-.defs { position: absolute; }
+.bg-defs { position: absolute; }
 .world {
   position: absolute; inset: 0;
-  transform: rotateY(calc(var(--px) * 2.2deg)) rotateX(calc(var(--py) * -1.6deg)) scale(1.08);
+  transform: rotateY(calc(var(--px) * 0.8deg)) rotateX(calc(var(--py) * -0.6deg)) scale(1.04);
 }
 .world > * { position: absolute; inset: 0; }
-.paper {
+.bg-paper {
   background:
     radial-gradient(70% 60% at 50% 42%, var(--bg-glow) 0%, transparent 70%),
     linear-gradient(180deg, var(--bg-white) 0%, var(--bg-mid) 55%, var(--bg-white-b) 100%);
 }
-.grid {
+.bg-grid {
   width: 100%; height: 100%; overflow: visible;
-  transform: translate(calc(var(--px) * -10px), calc(var(--py) * -7px));
+  transform: translate(calc(var(--px) * -4px), calc(var(--py) * -3px));
   filter: url(#lineGlow);
 }
 .tri-line { fill: none; stroke: var(--tri-line); stroke-opacity: var(--tri-line-a); stroke-width: 0.8; }
 .tri-x { fill: none; stroke: var(--tri-x); stroke-opacity: var(--tri-x-a); stroke-width: 1.4; stroke-linecap: round; }
 /* 빛 덩어리 — 흰빛 위주에 아주 옅은 푸른 기 */
-.leak { inset: auto; border-radius: 50%; mix-blend-mode: var(--leak-blend); filter: blur(40px); }
-.leak-a { width: 60vw; height: 60vw; left: 8vw; top: -22vw; background: radial-gradient(closest-side, var(--leak-1), var(--leak-1b) 50%, transparent); animation: driftA 26s ease-in-out infinite alternate; }
-.leak-b { width: 46vw; height: 46vw; right: -6vw; top: 30vh; background: radial-gradient(closest-side, var(--leak-2), var(--leak-2b) 55%, transparent); animation: driftB 32s ease-in-out infinite alternate; }
-.leak-c { width: 52vw; height: 40vw; left: -10vw; bottom: -18vw; background: radial-gradient(closest-side, var(--leak-3), var(--leak-3b) 55%, transparent); animation: driftC 29s ease-in-out infinite alternate; }
+.bg-leak { inset: auto; border-radius: 50%; mix-blend-mode: var(--leak-blend); filter: blur(40px); }
+.bg-leak-a { width: 60vw; height: 60vw; left: 8vw; top: -22vw; background: radial-gradient(closest-side, var(--leak-1), var(--leak-1b) 50%, transparent); animation: driftA 26s ease-in-out infinite alternate; }
+.bg-leak-b { width: 46vw; height: 46vw; right: -6vw; top: 30vh; background: radial-gradient(closest-side, var(--leak-2), var(--leak-2b) 55%, transparent); animation: driftB 32s ease-in-out infinite alternate; }
+.bg-leak-c { width: 52vw; height: 40vw; left: -10vw; bottom: -18vw; background: radial-gradient(closest-side, var(--leak-3), var(--leak-3b) 55%, transparent); animation: driftC 29s ease-in-out infinite alternate; }
 @keyframes driftA { to { transform: translate(14vw, 8vh) scale(1.1); } }
 @keyframes driftB { to { transform: translate(-12vw, -10vh) scale(0.92); } }
 @keyframes driftC { to { transform: translate(18vw, -6vh) scale(1.08); } }
 /* 창이 뒤로 가면 떠도는 빛을 멈춘다 — 게임·서버에 그래픽 자원을 양보 */
-:root.is-idle .leak, :root.is-idle .grain { animation-play-state: paused; }
+:root.is-idle .bg-leak, :root.is-idle .grain { animation-play-state: paused; }
 
 /* ═══════════ 렌즈 ═══════════
    배경에만: 가장자리 색수차 → 블러, 그 위로 빛 번짐 (UI 글자에는 걸지 않는다)
    화면 전체: 옅은 비네트와 낟알 */
-.bg-lens { display: contents; --lx: calc(50% - var(--px) * 6%); --ly: calc(50% - var(--py) * 6%); }
+.bg-lens { display: contents; --lx: calc(50% - var(--px) * 2%); --ly: calc(50% - var(--py) * 2%); }
 .bg-lens > * { position: fixed; inset: 0; z-index: 1; pointer-events: none; opacity: 0; transition: opacity 0.9s var(--ease); }
 :root.bg-on .bg-lens > * { opacity: 1; }
-:root.bg-on .bg-lens > .bloom { opacity: var(--bloom); }
+:root.bg-on .bg-lens > .bg-bloom { opacity: var(--bloom); }
 .lens-ca {
   backdrop-filter: url(#lensCA);
-  mask: radial-gradient(ellipse 74% 72% at var(--lx) var(--ly), transparent 52%, rgba(0, 0, 0, 0.8) 74%, #000 92%);
-  -webkit-mask: radial-gradient(ellipse 74% 72% at var(--lx) var(--ly), transparent 52%, rgba(0, 0, 0, 0.8) 74%, #000 92%);
+  mask: radial-gradient(ellipse 80% 78% at var(--lx) var(--ly), transparent 80%, rgba(0, 0, 0, 0.45) 93%, rgba(0, 0, 0, 0.75) 100%);
+  -webkit-mask: radial-gradient(ellipse 80% 78% at var(--lx) var(--ly), transparent 80%, rgba(0, 0, 0, 0.45) 93%, rgba(0, 0, 0, 0.75) 100%);
 }
 .lens-blur {
-  backdrop-filter: blur(4px);
-  mask: radial-gradient(ellipse 78% 76% at var(--lx) var(--ly), transparent 64%, rgba(0, 0, 0, 0.55) 84%, #000 100%);
-  -webkit-mask: radial-gradient(ellipse 78% 76% at var(--lx) var(--ly), transparent 64%, rgba(0, 0, 0, 0.55) 84%, #000 100%);
+  backdrop-filter: blur(3px);
+  mask: radial-gradient(ellipse 80% 78% at var(--lx) var(--ly), transparent 76%, rgba(0, 0, 0, 0.45) 92%, #000 100%);
+  -webkit-mask: radial-gradient(ellipse 80% 78% at var(--lx) var(--ly), transparent 76%, rgba(0, 0, 0, 0.45) 92%, #000 100%);
 }
-.bloom { backdrop-filter: blur(18px) brightness(1.08) saturate(1.15); }
-.lens { display: contents; --lx: calc(50% - var(--px) * 6%); --ly: calc(50% - var(--py) * 6%); }
+.bg-bloom { backdrop-filter: blur(18px) brightness(1.08) saturate(1.15); }
+.lens { display: contents; --lx: calc(50% - var(--px) * 2%); --ly: calc(50% - var(--py) * 2%); }
 .lens > * { position: fixed; inset: 0; pointer-events: none; z-index: 3; }
 .lens-vignette { background: radial-gradient(ellipse 86% 82% at var(--lx) var(--ly), transparent 56%, var(--vignette-a) 82%, var(--vignette-b) 100%); }
 .grain { inset: -50%; background-repeat: repeat; opacity: var(--grain); animation: grain 0.9s steps(3) infinite; }
@@ -124,35 +124,27 @@ p { margin: 0; line-height: 1.6; color: var(--ink-2); }
 .bad { color: var(--bad-text) !important; }
 
 /* ═══════════ 공간 속의 판 ═══════════ */
-.ui { position: fixed; inset: 0; z-index: 2; pointer-events: none; perspective: 1500px; perspective-origin: 50% 50%; }
-.pane { position: absolute; transform-style: preserve-3d; pointer-events: auto; display: flex; flex-direction: column; min-height: 0; }
+/* 판은 평평하게 둔다 — 3D 로 기울이면 글자(특히 스크롤되는 영역)가 흐려지고 가장자리가 잘린다 */
+.ui { position: fixed; inset: 0; z-index: 2; pointer-events: none; }
+.pane { position: absolute; pointer-events: auto; display: flex; flex-direction: column; min-height: 0; }
 
 .pane-l {
   left: 6.5vw; top: calc(var(--band-bottom) + 26px); bottom: 7vh;
   width: clamp(320px, 27vw, 470px);
   padding: 20px 22px 14px;
   background: var(--pane-bg);
-  transform-origin: 0% 50%;
-  transform:
-    translate(calc(var(--px) * -4px), calc(var(--py) * -3px))
-    rotateY(calc(4deg - var(--px) * 0.8deg)) rotateX(calc(var(--py) * 0.6deg));
 }
 .pane-r {
   right: 4.5vw; top: calc(var(--band-bottom) + 14px); bottom: 6vh;
   width: clamp(460px, 41vw, 780px);
   padding: 18px 22px 16px;
   background: var(--pane-bg);
-  transform-origin: 100% 50%;
-  transform:
-    translate(calc(var(--px) * -5px), calc(var(--py) * -3px))
-    rotateY(calc(-4deg - var(--px) * 0.8deg)) rotateX(calc(var(--py) * 0.6deg));
 }
 /* 판 아래 바닥에 떨어지는 그림자 */
 .pane::after {
   content: ""; position: absolute; z-index: -1; pointer-events: none;
-  left: 4%; right: 4%; bottom: -56px; height: 48px;
+  left: 2%; right: 2%; bottom: -60px; height: 56px;
   background: radial-gradient(closest-side, var(--pane-floor), transparent);
-  filter: blur(8px);
 }
 /* 판 모서리의 가는 표식 */
 .pin { position: absolute; width: 14px; height: 14px; pointer-events: none; }
@@ -167,15 +159,11 @@ p { margin: 0; line-height: 1.6; color: var(--ink-2); }
 .col-b { display: none; }
 .pane-scroll { flex: 1; min-height: 0; overflow-y: auto; margin-right: -10px; padding-right: 10px; }
 
-/* 서버 페이지 — 고른 서버 · 탭 · 내용을 한 큰 창에. 판 하나라 좌우로 기울이지 않고, 위쪽이 살짝 물러나게만 세운다 */
+/* 서버 페이지 — 고른 서버 · 탭 · 내용을 한 큰 창에 */
 :root[data-page="server"] .pane-r { display: none; }
 :root[data-page="server"] .pane-l {
   right: 4.5vw; width: auto;
   padding: 20px 24px 16px;
-  transform-origin: 50% 100%;
-  transform:
-    translate(calc(var(--px) * -4px), calc(var(--py) * -3px))
-    rotateX(calc(1deg + var(--py) * 0.5deg)) rotateY(calc(var(--px) * -0.6deg));
 }
 :root[data-page="server"] .col-a { flex: 0 0 clamp(300px, 26vw, 400px); }
 :root[data-page="server"] .col-b {
@@ -757,7 +745,7 @@ input[type="number"].field { font-family: var(--mono); }
 
 /* ═══════════ 새로 만들기 ↔ 가져오기: 오른쪽 판만 흐려졌다가 새로 나온다 ═══════════ */
 .main { transition: opacity 0.22s var(--ease), filter 0.22s var(--ease); }
-.main.is-swap { opacity: 0; filter: blur(6px); }
+.main.is-swap { opacity: 0; }
 
 /* ═══════════ 플러그인·모드 탭: 설치됨 / 찾기 ═══════════ */
 .addon-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }

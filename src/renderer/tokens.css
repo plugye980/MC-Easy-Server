@@ -60,31 +60,31 @@
 :root[data-theme="light"],
 [data-theme="light"] {
   color-scheme: light;
-  --paper-top: #fbfdff;
-  --paper-mid: #f7fafe;
-  --paper-bottom: #f3f7fc;
+  --paper-top: #f4f7fc;
+  --paper-mid: #eff4fa;
+  --paper-bottom: #eaf0f8;
 
   /* 배경 — 흰 삼각 그리드 공간 */
-  --bg-white: #fbfdff;
-  --bg-mid: #f7fafe;
-  --bg-white-b: #f3f7fc;
-  --bg-glow: #ffffff;
+  --bg-white: #f4f7fc;
+  --bg-mid: #eff4fa;
+  --bg-white-b: #eaf0f8;
+  --bg-glow: #f9fbff;
   --tri-line: #9db0c2;
   --tri-line-a: 0.28;
   --tri-x: #4c6780;
   --tri-x-a: 0.85;
   --leak-blend: screen;
-  --leak-1: rgba(255, 255, 255, 0.95);
-  --leak-1b: rgba(236, 246, 255, 0.5);
-  --leak-2: rgba(255, 255, 255, 0.9);
-  --leak-2b: rgba(228, 242, 255, 0.45);
-  --leak-3: rgba(255, 255, 255, 0.85);
-  --leak-3b: rgba(240, 248, 255, 0.4);
-  --bloom: 0.55;
+  --leak-1: rgba(246, 250, 255, 0.85);
+  --leak-1b: rgba(222, 236, 252, 0.45);
+  --leak-2: rgba(244, 249, 255, 0.8);
+  --leak-2b: rgba(216, 232, 252, 0.4);
+  --leak-3: rgba(244, 249, 255, 0.75);
+  --leak-3b: rgba(224, 238, 252, 0.35);
+  --bloom: 0.4;
 
-  --ink: #1b2230;          /* 제목·숫자 */
-  --ink-2: #4b5566;        /* 보조 */
-  --mute: #5d6676;         /* 설명·라벨 */
+  --ink: #161c28;          /* 제목·숫자 */
+  --ink-2: #404959;        /* 보조 */
+  --mute: #535c6c;         /* 설명·라벨 */
   --faint: #6f7887;        /* 약한 안내 — 흰 바탕에서도 4.5:1 이상 */
 
   --accent: #1f3cff;       /* 코발트 — 선·점·글자 */
@@ -168,11 +168,11 @@
   --leak-2b: rgba(80, 110, 180, 0.06);
   --leak-3: rgba(120, 150, 210, 0.12);
   --leak-3b: rgba(90, 120, 190, 0.05);
-  --bloom: 0.4;
+  --bloom: 0.3;
 
-  --ink: #e4ecf6;
-  --ink-2: #b4c0d0;
-  --mute: #9aa6b8;
+  --ink: #eaf0f8;
+  --ink-2: #c0cad8;
+  --mute: #a6b1c2;
   --faint: #7d889a;
 
   --accent: #5b78ff;

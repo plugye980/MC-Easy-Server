@@ -3,8 +3,8 @@
    - 바탕: 푸른 기가 아주 살짝 섞인 흰색 (어둡게: 부드러운 남색 검정)
    - 삼각 그리드: 선은 연하게, 꼭짓점의 X자만 진하게, 선 자체에 빛 번짐
    - 천천히 떠도는 빛 덩어리
-   - 렌즈(배경에만): 가장자리 색수차 → 블러, 그 위로 전체 빛 번짐. 비네트·낟알은 화면 맨 위 렌즈 층
-   - 마우스에 따라 공간과 판이 아주 조금 기운다
+   - 렌즈(배경에만): 맨 가장자리의 옅은 색수차 → 블러, 그 위로 전체 빛 번짐. 비네트·낟알은 화면 맨 위 렌즈 층
+   - 마우스에 따라 배경만 아주 조금 기운다 (판과 글자는 그대로)
    로딩 화면(서버를 만들 때)만 캔버스에 그려 배경 위로 부드럽게 겹친다.
    창이 뒤로 가면 떠도는 빛을 멈춰 게임과 서버에 그래픽 자원을 양보한다. */
 (function () {
@@ -14,19 +14,19 @@
 
   /* ════════════ 배경 만들기 ════════════ */
   const DEFS = `
-<svg class="defs" width="0" height="0" aria-hidden="true" focusable="false">
+<svg class="bg-defs" width="0" height="0" aria-hidden="true" focusable="false">
   <defs>
     <filter id="lensCA" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB">
       <feColorMatrix in="SourceGraphic" type="matrix" values="1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0" result="r" />
-      <feOffset in="r" dx="-6" dy="0" result="r1" data-ca="r" />
+      <feOffset in="r" dx="-2" dy="0" result="r1" data-ca="r" />
       <feMerge result="r2"><feMergeNode in="r" /><feMergeNode in="r1" /></feMerge>
       <feColorMatrix in="SourceGraphic" type="matrix" values="0 0 0 0 0  0 1 0 0 0  0 0 0 0 0  0 0 0 1 0" result="g" />
       <feColorMatrix in="SourceGraphic" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 1 0 0  0 0 0 1 0" result="b" />
-      <feOffset in="b" dx="6" dy="0" result="b1" data-ca="b" />
+      <feOffset in="b" dx="2" dy="0" result="b1" data-ca="b" />
       <feMerge result="b2"><feMergeNode in="b" /><feMergeNode in="b1" /></feMerge>
       <feBlend in="r2" in2="g" mode="screen" result="rg" />
       <feBlend in="rg" in2="b2" mode="screen" result="split" />
-      <feColorMatrix in="split" type="saturate" values="2.1" result="vivid" />
+      <feColorMatrix in="split" type="saturate" values="1.4" result="vivid" />
       <feComponentTransfer in="vivid">
         <feFuncR type="linear" slope="1.06" intercept="0.02" />
         <feFuncG type="linear" slope="1.06" intercept="0.02" />
@@ -50,11 +50,11 @@
     for (const n of document.querySelectorAll('[data-ca]')) ca[n.getAttribute('data-ca')] = n;
     const world = document.querySelector('.world');
     world.innerHTML = `
-      <div class="paper"></div>
-      <svg class="grid" xmlns="${SVG}"><rect x="-120" y="-120" width="120%" height="120%" fill="url(#tri)" /></svg>
-      <div class="leak leak-a"></div>
-      <div class="leak leak-b"></div>
-      <div class="leak leak-c"></div>`;
+      <div class="bg-paper"></div>
+      <svg class="bg-grid" xmlns="${SVG}"><rect x="-120" y="-120" width="120%" height="120%" fill="url(#tri)" /></svg>
+      <div class="bg-leak bg-leak-a"></div>
+      <div class="bg-leak bg-leak-b"></div>
+      <div class="bg-leak bg-leak-c"></div>`;
   }
 
   /* ════════════ 마우스 — 부드럽게 따라간다. 멈추면 계산도 멈춘다 ════════════ */
@@ -62,8 +62,8 @@
   const cur = { x: 0, y: 0 };
   let moving = false;
   function follow() {
-    cur.x += (target.x - cur.x) * 0.06;
-    cur.y += (target.y - cur.y) * 0.06;
+    cur.x += (target.x - cur.x) * 0.04;
+    cur.y += (target.y - cur.y) * 0.04;
     const settled = Math.abs(target.x - cur.x) + Math.abs(target.y - cur.y) < 0.0005;
     if (settled) {
       cur.x = target.x;
@@ -73,11 +73,11 @@
     root.style.setProperty('--py', cur.y.toFixed(4));
     // 가장자리 색수차: 기운 쪽으로 더 벌어진다
     if (ca.r) {
-      const amt = 6 + Math.abs(cur.x) * 4 + Math.abs(cur.y) * 2;
-      ca.r.setAttribute('dx', (-amt - cur.x * 1.5).toFixed(2));
-      ca.r.setAttribute('dy', (-cur.y * 1.6).toFixed(2));
-      ca.b.setAttribute('dx', (amt - cur.x * 1.5).toFixed(2));
-      ca.b.setAttribute('dy', (cur.y * 1.6).toFixed(2));
+      const amt = 2 + Math.abs(cur.x) * 0.8 + Math.abs(cur.y) * 0.4;
+      ca.r.setAttribute('dx', (-amt - cur.x * 0.5).toFixed(2));
+      ca.r.setAttribute('dy', (-cur.y * 0.5).toFixed(2));
+      ca.b.setAttribute('dx', (amt - cur.x * 0.5).toFixed(2));
+      ca.b.setAttribute('dy', (cur.y * 0.5).toFixed(2));
     }
     if (settled) moving = false;
     else requestAnimationFrame(follow);
